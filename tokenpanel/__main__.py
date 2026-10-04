@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import codecs
 import sys
 
 from .model import DEFAULT_METRIC, METRICS
@@ -8,20 +9,46 @@ from .paths import default_claude_dirs, default_codex_dirs
 from .store import RANGES, Store
 
 
+# Stand-ins for characters a legacy console code page may lack.
+_FALLBACK = {"—": "-", "…": "...", "‹": "<", "›": ">", "·": "|"}
+
+
+def _fallback(err: UnicodeEncodeError) -> tuple[str, int]:
+    return "".join(_FALLBACK.get(c, "?") for c in err.object[err.start:err.end]), err.end
+
+
+codecs.register_error("tokenpanel", _fallback)
+
+
+def console_encoding(code_page: int) -> str:
+    """Python encoding for a Windows console code page; UTF-8 when there is none or it is unknown."""
+    if not code_page:
+        return "utf-8"
+    try:
+        return codecs.lookup(f"cp{code_page}").name
+    except LookupError:
+        return "utf-8"
+
+
 def _windows_console() -> None:
-    # The Windows .exe is a GUI program and starts without stdout; reuse the console it was started from.
     if sys.platform != "win32":
-        return
-    if sys.stdout is not None:
-        # Redirected output would use the ANSI code page, which can't hold every thread title.
-        if not sys.stdout.isatty() and hasattr(sys.stdout, "reconfigure"):
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         return
     import ctypes
 
-    if ctypes.windll.kernel32.AttachConsole(-1):
-        sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")
-        sys.stderr = sys.stdout
+    kernel32 = ctypes.windll.kernel32
+    if sys.stdout is None:
+        # The .exe is a GUI program and starts without stdout; write to the console it was started from.
+        if kernel32.AttachConsole(-1):
+            sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+            sys.stderr = sys.stdout
+        return
+    if sys.stdout.isatty() or not hasattr(sys.stdout, "reconfigure"):
+        return
+    # Piped or redirected: the shell decodes the bytes with its console's code page (857 on Turkish Windows).
+    code_page = kernel32.GetConsoleOutputCP()
+    if not code_page and kernel32.AttachConsole(-1):
+        code_page = kernel32.GetConsoleOutputCP()
+    sys.stdout.reconfigure(encoding=console_encoding(code_page), errors="tokenpanel")
 
 
 def main(argv: list[str] | None = None) -> int:

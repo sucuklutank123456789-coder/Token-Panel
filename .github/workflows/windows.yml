@@ -43,6 +43,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
           $logs = Join-Path $env:RUNNER_TEMP "logs"
           python scripts/sample_logs.py $logs
           $dirs = @("--claude-dir", "$logs\claude", "--codex-dir", "$logs\codex")
@@ -60,6 +61,13 @@ jobs:
           # The command the README gives: piping makes PowerShell wait for the GUI program and capture its output.
           $piped = & $exe --dump --range today @dirs | Out-String
           if ($piped -notmatch "Codex") { throw "piped --dump printed nothing: '$piped'" }
+          # Same on a Turkish console (code page 857): letters must survive, symbols it lacks become ASCII.
+          [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(857)
+          $piped = & $exe --dump --range today @dirs | Out-String
+          [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+          $piped
+          if (-not $piped.Contains("Yanıtla çiz")) { throw "Turkish letters were garbled on code page 857" }
+          if (-not $piped.Contains("[Codex · Desktop]")) { throw "middle dot was garbled on code page 857" }
 
           # --self-test: opens the panel and renders every level, with the real Windows platform plugin
           # and with the offscreen one.

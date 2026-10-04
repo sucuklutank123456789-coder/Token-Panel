@@ -6,6 +6,7 @@ import unittest
 from unittest import mock
 
 from tokenpanel import paths
+from tokenpanel.__main__ import console_encoding
 from tokenpanel.store import Store, project_name
 
 
@@ -265,6 +266,19 @@ class PathsTest(unittest.TestCase):
             with mock.patch.object(paths, "wsl_homes", return_value=[os.path.join(home, "wsl", "ali")]):
                 self.assertIn(os.path.join(home, "wsl", "ali", ".codex"), paths.default_codex_dirs(include_wsl=True))
                 self.assertIn(os.path.join(home, "wsl", "ali", ".claude"), paths.default_claude_dirs(include_wsl=True))
+
+
+class ConsoleEncodingTest(unittest.TestCase):
+    def test_code_pages(self):
+        self.assertEqual(console_encoding(857), "cp857")
+        self.assertEqual(console_encoding(65001), "utf-8")
+        self.assertEqual(console_encoding(0), "utf-8")
+        self.assertEqual(console_encoding(99999), "utf-8")
+
+    def test_turkish_console_keeps_letters_and_replaces_symbols(self):
+        line = "Yanıtla merhaba — ~ (home) · Claude Code 1.2K…"
+        out = line.encode("cp857", errors="tokenpanel").decode("cp857")
+        self.assertEqual(out, "Yanıtla merhaba - ~ (home) · Claude Code 1.2K...")
 
 
 if __name__ == "__main__":

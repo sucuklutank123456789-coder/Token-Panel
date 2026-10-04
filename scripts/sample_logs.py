@@ -51,7 +51,7 @@ def write_sample(out: str) -> None:
         {"timestamp": now, "type": "session_meta",
          "payload": {"id": "codex-sample", "originator": "Codex Desktop", "cwd": cwd}},
         {"type": "response_item", "payload": {"type": "message", "role": "user",
-                                              "content": [{"type": "input_text", "text": "Sample Codex thread"}]}},
+                                              "content": [{"type": "input_text", "text": "Sample Codex thread: Yanıtla çiz"}]}},
         {"type": "turn_context", "payload": {"turn_id": "u1", "model": "gpt-5.5", "effort": "high"}},
         {"type": "response_item", "payload": {"type": "function_call", "name": "shell"}},
         {"timestamp": now, "type": "token_usage_record",

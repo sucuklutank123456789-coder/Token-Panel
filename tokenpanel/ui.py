@@ -86,11 +86,14 @@ DARK = Theme(
 
 def current_theme() -> Theme:
     hints = QGuiApplication.styleHints()
-    scheme = getattr(hints, "colorScheme", lambda: None)()
-    if scheme == Qt.ColorScheme.Dark:
-        return DARK
-    if scheme == Qt.ColorScheme.Light:
-        return LIGHT
+    # Qt.ColorScheme exists from Qt 6.5; older versions fall back to the palette.
+    color_scheme = getattr(Qt, "ColorScheme", None)
+    if color_scheme is not None and hasattr(hints, "colorScheme"):
+        scheme = hints.colorScheme()
+        if scheme == color_scheme.Dark:
+            return DARK
+        if scheme == color_scheme.Light:
+            return LIGHT
     return DARK if QGuiApplication.palette().window().color().lightness() < 128 else LIGHT
 
 

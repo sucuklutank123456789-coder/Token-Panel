@@ -32,37 +32,57 @@ It can be changed with the **Metric** button on the overview:
 
 The choice is remembered.
 
-## Install (Arch-based distributions)
+## Install
+
+### Any distribution (recommended)
 
 ```bash
 git clone https://github.com/sucuklutank123456789-coder/Token.git
+cd Token
+./install.sh             # add --autostart to start it on login
+```
+
+The installer detects the distribution, takes PySide6 from its packages when available (otherwise from
+PyPI into a private virtual environment) and installs the app for the current user into `~/.local`
+(app menu entry included). It only asks for `sudo` to install distribution packages.
+
+| Distribution | PySide6 source |
+|---|---|
+| Arch, Manjaro, EndeavourOS, CachyOS | `pyside6` package |
+| Fedora | `python3-pyside6` package |
+| openSUSE Tumbleweed | `python3-pyside6` package |
+| Debian 13+, Ubuntu 24.04+ and derivatives (Mint, Pop!_OS, Zorin…) | `python3-pyside6.*` packages |
+| Debian 12, Ubuntu 22.04, openSUSE Leap, RHEL/Rocky/Alma 9, others | PyPI |
+
+Other options: `--pip` (always use PyPI), `--yes` (no confirmation prompts), `--uninstall`.
+To update: `git pull && ./install.sh`.
+
+### Arch package
+
+```bash
 cd Token/packaging/arch
 makepkg -si
 ```
 
-Then open **Token Panel** from your app menu, or run `tokenpanel` in a terminal.
-
-To start it on login:
+To start it on login with the package:
 
 ```bash
 mkdir -p ~/.config/autostart
 cp /usr/share/applications/tokenpanel.desktop ~/.config/autostart/
 ```
 
-To update: `git pull`, then `makepkg -sif` in `packaging/arch` and restart the app.
-
-### Running without packaging
+### Running from the source tree
 
 ```bash
-sudo pacman -S pyside6
-python -m tokenpanel          # from the repository root
+python -m tokenpanel          # needs Python 3.10+ and PySide6 6.4+
 ```
 
 ### Desktop environment notes
 
-- **KDE, XFCE, Cinnamon, LXQt**: the tray works out of the box.
+- **KDE, XFCE, Cinnamon, MATE, LXQt, Budgie**: the tray works out of the box.
 - **Hyprland / Sway**: enable the `tray` module in waybar.
-- **GNOME**: needs `gnome-shell-extension-appindicator` for the tray. Without a tray the app opens as a normal window.
+- **GNOME**: needs the AppIndicator extension (`gnome-shell-extension-appindicator`; built in on Ubuntu).
+  Without a tray the app opens as a normal window.
 
 ## Usage
 

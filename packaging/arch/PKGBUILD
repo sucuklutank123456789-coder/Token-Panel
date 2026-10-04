@@ -2,16 +2,16 @@
 pkgname=tokenpanel
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Claude Code ve Codex token kullanımını gösteren menü çubuğu paneli"
+pkgdesc="System tray panel showing Claude Code and Codex token usage"
 arch=('any')
 url="https://github.com/sucuklutank123456789-coder/Token"
 license=('MIT')
 depends=('python' 'pyside6')
 makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
-optdepends=('gnome-shell-extension-appindicator: GNOME üzerinde tray simgesi için')
+optdepends=('gnome-shell-extension-appindicator: tray icon support on GNOME')
 source=()
 
-# Depo kökünden derler: `cd packaging/arch && makepkg -si`
+# Builds from the repository root: `cd packaging/arch && makepkg -si`
 _root="$(realpath "$startdir/../..")"
 
 build() {

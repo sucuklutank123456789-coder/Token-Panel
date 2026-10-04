@@ -51,6 +51,11 @@ def _prompt_text(text: str) -> str:
     return text.removeprefix("/goal ").strip()
 
 
+def _blended(u: dict) -> int:
+    """Codex'in gösterdiği toplam: önbellek dışı girdi + çıktı."""
+    return max(_int(u, "input_tokens") - _int(u, "cached_input_tokens"), 0) + _int(u, "output_tokens")
+
+
 def _short(text: str, limit: int = 80) -> str:
     text = " ".join(text.split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
@@ -221,6 +226,9 @@ class CodexFile(JsonlFile):
         self.pending_tools: list[str] = []
         self.has_records = False
         self.last_total = -1
+        # Codex'in kendi sayacı (token_count.total_token_usage); "uygulamayla aynı" ölçüsü için.
+        self.last_event: Event | None = None
+        self.app_total: float | None = None
 
     def handle(self, d: dict, sink: Sink) -> None:
         kind = d.get("type")
@@ -288,7 +296,10 @@ class CodexFile(JsonlFile):
         elif sub == "token_count":
             self._limits(d, p, sink)
             info = p.get("info")
-            if self.has_records or not isinstance(info, dict):
+            if not isinstance(info, dict):
+                return
+            if self.has_records:
+                self._app_counter(info)
                 return
             total = (info.get("total_token_usage") or {}).get("total_tokens")
             last = info.get("last_token_usage")
@@ -296,6 +307,25 @@ class CodexFile(JsonlFile):
                 return
             self.last_total = total
             self._emit(f"codex:{self.thread_id}:{total}", d.get("timestamp"), last, self.model, self.effort, sink)
+
+    def _app_counter(self, info: dict) -> None:
+        """Codex'in kullanıcıya gösterdiği toplamdaki artışı son model çağrısına yazar.
+
+        Codex, sohbeti sıkıştırırken yaptığı özetleme çağrısını token_usage_record olarak
+        kaydeder ama kendi sayacına eklemez. Böylece bu ölçü Codex'in gösterdiğiyle aynı olur.
+        """
+        total = info.get("total_token_usage")
+        if not isinstance(total, dict):
+            return
+        blended = _blended(total)
+        if self.app_total is None:
+            # Devam ettirilen oturumlarda sayaç önceki dosyadan sürer; başlangıcı buna göre al.
+            last = info.get("last_token_usage")
+            self.app_total = blended - (_blended(last) if isinstance(last, dict) else 0)
+        delta = blended - self.app_total
+        self.app_total = blended
+        if delta > 0 and self.last_event is not None:
+            self.last_event.usage.app_io += delta
 
     def _response_item(self, p: dict, sink: Sink) -> None:
         sub = p.get("type")
@@ -324,7 +354,8 @@ class CodexFile(JsonlFile):
             output=_int(u, "output_tokens"),
             reasoning=_int(u, "reasoning_output_tokens"),
         )
-        usage.app_io = usage.input + usage.output
+        # Kayıtlı sürümlerde app_io, ardından gelen token_count ile doldurulur.
+        usage.app_io = 0 if self.has_records else usage.input + usage.output
         ev = Event(
             source="codex",
             client=self.client,
@@ -336,7 +367,8 @@ class CodexFile(JsonlFile):
             tools=self.pending_tools,
         )
         self.pending_tools = []
-        sink.add_event(str(key), ev)
+        # Aynı çağrı başka bir dosyada (ör. arşiv kopyası) zaten sayıldıysa sayaç ona yazılmaz.
+        self.last_event = ev if sink.add_event(str(key), ev) is None else None
 
     def _limits(self, d: dict, p: dict, sink: Sink) -> None:
         rl = p.get("rate_limits")

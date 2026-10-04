@@ -570,7 +570,8 @@ class Panel(QWidget):
         menu.clear()
         hints = {
             "app": "Varsayılan. Claude uygulamasındaki 'Total tokens' ile aynı yöntem: log'a bölünerek "
-            "yazılan aynı yanıtın her satırı ayrı sayılır. Codex'te girdi + çıktı ile aynıdır.",
+            "yazılan aynı yanıtın her satırı ayrı sayılır. Codex'te Codex'in kendi sayacıyla aynıdır "
+            "(sohbet sıkıştırma çağrıları sayılmaz).",
             "io": "Her model yanıtı bir kez sayılır; Codex CLI'ın toplamıyla aynı tanım.",
             "new": "Önbelleğe ilk kez yazılan bağlam da sayılır.",
             "raw": "Her çağrıda önbellekten tekrar okunan bağlam da sayılır; çok büyük çıkar.",

@@ -58,8 +58,9 @@ class Usage:
     cache_write: int = 0
     output: int = 0
     reasoning: int = 0
-    # Claude uygulamasının istatistik ekranının saydığı girdi + çıktı: aynı yanıtın log'a
-    # bölünerek yazılan her satırı ayrı sayılır (tekilleştirilmez). Codex'te io ile aynıdır.
+    # Uygulamaların kendi gösterdiği girdi + çıktı.
+    # Claude: istatistik ekranı aynı yanıtın log'a bölünerek yazılan her satırını ayrı sayar.
+    # Codex: kendi sayacı (token_count) sohbet sıkıştırma çağrılarını saymaz.
     app_io: float = 0
 
     @property
@@ -69,7 +70,7 @@ class Usage:
     def value(self, metric: str) -> float:
         """Seçilen ölçüye göre değer.
 
-        io : önbellek hariç girdi + çıktı (Codex CLI'ın gösterdiği toplamla aynı tanım)
+        io : önbellek hariç girdi + çıktı, her model çağrısı bir kez (gerçek harcama)
         new: io + önbelleğe yazılan girdi
         raw: her şey; önbellekten tekrar tekrar okunan bağlam da dahil
         app: Claude uygulamasının gösterdiği "Total tokens" ile aynı yöntem

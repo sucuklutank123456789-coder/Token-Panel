@@ -158,6 +158,33 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(s.limits.plan, "plus")
         self.assertEqual(s.limits.primary.used_percent, 12.0)
 
+    def test_codex_app_metric_follows_codex_counter(self):
+        # Sıkıştırma (compaction) çağrısı kaydedilir ama Codex'in kendi sayacına girmez.
+        def tc(inp, cached, out, last_inp, last_cached, last_out):
+            return {"timestamp": "2026-10-04T10:02:00Z", "type": "event_msg", "payload": {
+                "type": "token_count", "info": {
+                    "total_token_usage": {"input_tokens": inp, "cached_input_tokens": cached, "output_tokens": out},
+                    "last_token_usage": {"input_tokens": last_inp, "cached_input_tokens": last_cached,
+                                         "output_tokens": last_out}}}}
+
+        p = os.path.join(self.codex, "sessions", "2026", "10", "04", "rollout-c.jsonl")
+        write_jsonl(p, [
+            codex_meta("tc", "Codex Desktop"),
+            codex_turn("u1", "gpt-5.5", "high"),
+            codex_record("r1", "u1", 1000, 600, 100),
+            tc(1000, 600, 100, 1000, 600, 100),
+            {"type": "compacted", "payload": {"message": ""}},
+            codex_record("r-compact", "u1", 5000, 1000, 300),
+            tc(1000, 600, 100, 50, 0, 10),
+            codex_record("r2", "u1", 400, 100, 20),
+            tc(1400, 700, 120, 400, 100, 20),
+        ])
+        self.store.refresh()
+        s, c = self.clients()
+        u = c[("codex", "Codex Desktop")].usage
+        self.assertEqual(u.value("app"), (1400 - 700) + 120)
+        self.assertEqual(u.value("io"), (400 + 100) + (4000 + 300) + (300 + 20))
+
     def test_codex_legacy_token_count_fallback(self):
         p = os.path.join(self.codex, "sessions", "2025", "01", "01", "rollout-old.jsonl")
 

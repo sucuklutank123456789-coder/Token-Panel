@@ -25,8 +25,8 @@ Ajanlar her model çağrısında konuşmanın tamamını yeniden gönderir; bunu
 
 | Ölçü | Sayılanlar |
 |---|---|
-| Claude uygulamasıyla aynı (varsayılan) | Claude Desktop'taki "Total tokens" ile aynı yöntem: Claude'un bir yanıtı log'a bölerek yazdığı her satır ayrı sayılır (Claude için ~1,5–2,5 kat yüksek çıkar; Codex'te girdi + çıktı ile aynı) |
-| Girdi + çıktı | her model yanıtı bir kez sayılır: önbellek dışı girdi + çıktı (düşünme dahil); Codex CLI'ın toplamıyla aynı tanım |
+| Claude uygulamasıyla aynı (varsayılan) | Claude Desktop'taki "Total tokens" ile aynı yöntem: Claude'un bir yanıtı log'a bölerek yazdığı her satır ayrı sayılır (Claude için ~1,5–2,5 kat yüksek çıkar). Codex'te Codex'in kendi sayacıyla aynı: sohbet sıkıştırma (compaction) özet çağrıları sayılmaz |
+| Girdi + çıktı | her model çağrısı bir kez sayılır: önbellek dışı girdi + çıktı (düşünme dahil), sıkıştırma çağrıları dahil — gerçek harcama |
 | Girdi + çıktı + önbelleğe yazma | yukarıdakiler + önbelleğe ilk kez yazılan bağlam |
 | Ham | her şey; önbellekten tekrar tekrar okunan bağlam da dahil |
 

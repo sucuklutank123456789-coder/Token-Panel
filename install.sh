@@ -187,9 +187,22 @@ fi
 if ! pyside_ok "$VENV/bin/python"; then
   # PyPI wheels need a few X11/EGL libraries that minimal installs may lack.
   case "$family" in
-    debian) pkg_install libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libfontconfig1 libdbus-1-3 || true ;;
-    fedora) pkg_install mesa-libEGL mesa-libGL libxkbcommon-x11 xcb-util-cursor fontconfig dbus-libs || true ;;
-    suse) pkg_install libEGL1 libGL1 libxkbcommon-x11-0 libxcb-cursor0 fontconfig libdbus-1-3 || true ;;
+    debian)
+      libs=()
+      for p in libglib2.0-0t64 libglib2.0-0 libegl1 libgl1 libfontconfig1 libdbus-1-3 libxkbcommon0 \
+        libxkbcommon-x11-0 libx11-xcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+        libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1; do
+        # libglib was renamed to libglib2.0-0t64 in Ubuntu 24.04 / Debian 13.
+        [ "$p" = libglib2.0-0 ] && [ "${libs[0]:-}" = libglib2.0-0t64 ] && continue
+        apt_has "$p" && libs+=("$p")
+      done
+      pkg_install "${libs[@]}" || true ;;
+    fedora)
+      pkg_install glib2 mesa-libEGL mesa-libGL fontconfig dbus-libs libxkbcommon libxkbcommon-x11 \
+        xcb-util-cursor xcb-util-wm xcb-util-image xcb-util-keysyms xcb-util-renderutil || true ;;
+    suse)
+      pkg_install libglib-2_0-0 libEGL1 libGL1 fontconfig libdbus-1-3 libxkbcommon0 libxkbcommon-x11-0 \
+        libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 || true ;;
   esac
   info "Installing PySide6 from PyPI (about 200 MB)"
   "$VENV/bin/python" -m pip install --quiet "PySide6>=6.4" || die "Could not install PySide6 from PyPI."

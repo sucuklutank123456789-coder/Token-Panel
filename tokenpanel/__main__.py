@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import codecs
+import os
 import sys
 
 from .model import DEFAULT_METRIC, METRICS
@@ -30,6 +31,50 @@ def console_encoding(code_page: int) -> str:
         return "utf-8"
 
 
+def _attach_console(kernel32) -> bool:
+    """Attaches to the console of the shell that started us.
+
+    The single-file .exe runs as two processes: a launcher that unpacks the program, then the program itself.
+    The direct parent is that windowless launcher, so look further up the process tree.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", ctypes.c_wchar * 260),
+        ]
+
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    parents: dict[int, int] = {}
+    if snapshot and snapshot != wintypes.HANDLE(-1).value:
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(entry)
+        ok = kernel32.Process32FirstW(wintypes.HANDLE(snapshot), ctypes.byref(entry))
+        while ok:
+            parents[entry.th32ProcessID] = entry.th32ParentProcessID
+            ok = kernel32.Process32NextW(wintypes.HANDLE(snapshot), ctypes.byref(entry))
+        kernel32.CloseHandle(wintypes.HANDLE(snapshot))
+    pid = os.getpid()
+    for _ in range(4):
+        pid = parents.get(pid, 0)
+        if not pid:
+            break
+        if kernel32.AttachConsole(pid):
+            return True
+    return bool(kernel32.AttachConsole(-1))
+
+
 def _windows_console() -> None:
     if sys.platform != "win32":
         return
@@ -38,7 +83,7 @@ def _windows_console() -> None:
     kernel32 = ctypes.windll.kernel32
     if sys.stdout is None:
         # The .exe is a GUI program and starts without stdout; write to the console it was started from.
-        if kernel32.AttachConsole(-1):
+        if _attach_console(kernel32):
             sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")
             sys.stderr = sys.stdout
         return
@@ -46,7 +91,7 @@ def _windows_console() -> None:
         return
     # Piped or redirected: the shell decodes the bytes with its console's code page (857 on Turkish Windows).
     code_page = kernel32.GetConsoleOutputCP()
-    if not code_page and kernel32.AttachConsole(-1):
+    if not code_page and _attach_console(kernel32):
         code_page = kernel32.GetConsoleOutputCP()
     sys.stdout.reconfigure(encoding=console_encoding(code_page), errors="tokenpanel")
 

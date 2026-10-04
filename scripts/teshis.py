@@ -84,6 +84,52 @@ print("\n+ önbelleğe yazma dahil:", m(sum(new.values())))
 print("Tekilleştirmesiz girdi + çıktı:", m(nodedup))
 print("Arka plan Haiku (cost-state):", m(bg))
 
+# --- Claude Code istatistik ekranının yöntemi -------------------------------------
+# projects/<p>/*.jsonl + projects/<p>/<oturum>/subagents/agent-*.jsonl;
+# ana dosyalarda sidechain satırları atlanır, satırlar tekilleştirilmez.
+stat_files = []
+for proj in glob.glob(base + "/projects/*/"):
+    stat_files += glob.glob(proj + "*.jsonl")
+    stat_files += glob.glob(proj + "*/subagents/agent-*.jsonl")
+sessions = 0
+types = collections.Counter()
+st = collections.Counter()
+for f in stat_files:
+    sub = "/subagents/" in f
+    had = False
+    with open(f, "rb") as fh:
+        for line in fh:
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(d, dict) or "timestamp" not in d:
+                continue
+            if not sub and d.get("isSidechain"):
+                continue
+            had = True
+            if not sub:
+                types[d.get("type")] += 1
+            if d.get("type") != "assistant":
+                continue
+            msg = d.get("message") or {}
+            u = msg.get("usage")
+            if not u or msg.get("model") == "<synthetic>":
+                continue
+            st["input"] += u.get("input_tokens") or 0
+            st["output"] += u.get("output_tokens") or 0
+            st["cache_read"] += u.get("cache_read_input_tokens") or 0
+            st["cache_write"] += u.get("cache_creation_input_tokens") or 0
+    if had and not sub:
+        sessions += 1
+print("\nClaude istatistik yöntemiyle (tekilleştirmesiz):")
+print("  oturum:", sessions, "| satır türleri:", dict(types.most_common(6)))
+print("  user+assistant satırı:", types["user"] + types["assistant"])
+print("  girdi:", m(st["input"]), " çıktı:", m(st["output"]), " önbellek okuma:", m(st["cache_read"]),
+      " önbellek yazma:", m(st["cache_write"]))
+print("  girdi+çıktı:", m(st["input"] + st["output"]),
+      " | +önbellek yazma:", m(st["input"] + st["output"] + st["cache_write"]))
+
 p = base + "/stats-cache.json"
 if os.path.exists(p):
     try:

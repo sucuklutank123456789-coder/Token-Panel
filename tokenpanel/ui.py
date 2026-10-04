@@ -65,7 +65,7 @@ LIGHT = Theme(
     text2="#52514e",
     muted="#7a7974",
     track="#e8e7e3",
-    series={"claude": "#2a78d6", "codex": "#eb6834"},
+    series={"claude": "#eb6834", "codex": "#2a78d6"},
     warning="#b47800",
     critical="#c62828",
 )
@@ -78,7 +78,7 @@ DARK = Theme(
     text2="#c3c2b7",
     muted="#8f8e86",
     track="#33332f",
-    series={"claude": "#3987e5", "codex": "#d95926"},
+    series={"claude": "#d95926", "codex": "#3987e5"},
     warning="#e0a43a",
     critical="#e66767",
 )

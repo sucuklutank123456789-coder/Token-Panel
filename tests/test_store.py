@@ -1,0 +1,194 @@
+import json
+import os
+import tempfile
+import unittest
+
+from tokenpanel.store import Store
+
+
+def write_jsonl(path, rows, partial=None):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r) + "\n")
+        if partial:
+            fh.write(partial)
+
+
+def claude_msg(mid, req, sid, entry, model="claude-opus-5-5", tools=(), ts="2026-10-04T10:00:00Z", **usage):
+    content = [{"type": "tool_use", "name": n, "id": "x", "input": {}} for n in tools] or [
+        {"type": "text", "text": "ok"}
+    ]
+    u = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    u.update(usage)
+    return {
+        "type": "assistant",
+        "sessionId": sid,
+        "entrypoint": entry,
+        "cwd": "/home/u/proj",
+        "gitBranch": "main",
+        "requestId": req,
+        "timestamp": ts,
+        "message": {"id": mid, "model": model, "content": content, "usage": u},
+    }
+
+
+def codex_meta(tid, originator, cwd="/home/u/proj"):
+    return {
+        "timestamp": "2026-10-04T10:00:00Z",
+        "type": "session_meta",
+        "payload": {"id": tid, "originator": originator, "cwd": cwd, "git": {"branch": "dev"}},
+    }
+
+
+def codex_turn(turn, model, effort):
+    return {"type": "turn_context", "payload": {"turn_id": turn, "model": model, "effort": effort}}
+
+
+def codex_record(resp, turn, inp, cached, out, reasoning=0):
+    u = {
+        "input_tokens": inp,
+        "cached_input_tokens": cached,
+        "cache_write_input_tokens": 0,
+        "output_tokens": out,
+        "reasoning_output_tokens": reasoning,
+        "total_tokens": inp + out,
+    }
+    return {
+        "timestamp": "2026-10-04T10:01:00Z",
+        "type": "token_usage_record",
+        "payload": {"response_id": resp, "turn_id": turn, "usage": u},
+    }
+
+
+def codex_call(name):
+    return {"type": "response_item", "payload": {"type": "function_call", "name": name}}
+
+
+class StoreTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.claude = os.path.join(self.tmp.name, "claude")
+        self.codex = os.path.join(self.tmp.name, "codex")
+        self.store = Store([self.claude], self.codex)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def clients(self):
+        s = self.store.summarize("all")
+        return s, {(c.source, c.client): c for c in s.clients}
+
+    def test_claude_split_lines_dedup_and_clients(self):
+        p = os.path.join(self.claude, "projects", "-home-u-proj", "s1.jsonl")
+        write_jsonl(
+            p,
+            [
+                {"type": "user", "sessionId": "s1", "message": {"content": "merhaba dünya"}},
+                # Aynı yanıt iki satıra bölünmüş: bir kez sayılmalı, araçlar birleşmeli.
+                claude_msg("m1", "r1", "s1", "cli", tools=["Bash"], input_tokens=10, output_tokens=5,
+                           cache_read_input_tokens=100),
+                claude_msg("m1", "r1", "s1", "cli", tools=["Read"], input_tokens=10, output_tokens=5,
+                           cache_read_input_tokens=100),
+                claude_msg("m2", "r2", "s1", "cli", model="claude-sonnet-5-5", output_tokens=20),
+                {"type": "ai-title", "aiTitle": "Başlık", "sessionId": "s1"},
+            ],
+        )
+        p2 = os.path.join(self.claude, "projects", "-home-u-proj", "s2.jsonl")
+        write_jsonl(p2, [claude_msg("m3", "r3", "s2", "sdk-ts", output_tokens=7)])
+        self.store.refresh()
+        s, c = self.clients()
+        self.assertEqual(s.total.total, 115 + 20 + 7)
+        cli = c[("claude", "cli")]
+        self.assertEqual(cli.label, "CLI")
+        self.assertEqual(cli.usage.total, 135)
+        t = cli.threads[0]
+        self.assertEqual(t.title, "Başlık")
+        self.assertEqual(t.branch, "main")
+        self.assertEqual(set(t.model_usage), {"claude-opus-5-5", "claude-sonnet-5-5"})
+        self.assertAlmostEqual(t.tools["Bash"], 57.5)
+        self.assertAlmostEqual(t.tools["Read"], 57.5)
+        self.assertEqual(c[("claude", "sdk-ts")].usage.total, 7)
+
+    def test_codex_records_models_tools_and_limits(self):
+        p = os.path.join(self.codex, "sessions", "2026", "10", "04", "rollout-a.jsonl")
+        rows = [
+            codex_meta("t1", "zed"),
+            {"type": "response_item", "payload": {"type": "message", "role": "user",
+                                                  "content": [{"type": "input_text", "text": "<env>x</env>"}]}},
+            {"type": "response_item", "payload": {"type": "message", "role": "user",
+                                                  "content": [{"type": "input_text",
+                                                               "text": "# Context from my IDE setup:\n\n## My request:\nselam\n"}]}},
+            codex_turn("u1", "gpt-5.5", "high"),
+            codex_call("exec_command"),
+            codex_call("apply_patch"),
+            codex_record("resp1", "u1", 1000, 800, 50, 10),
+            # Kayıt varken token_count yok sayılmalı (çift sayım olmasın).
+            {"timestamp": "2026-10-04T10:01:00Z", "type": "event_msg", "payload": {
+                "type": "token_count",
+                "info": {"total_token_usage": {"total_tokens": 1050}, "last_token_usage": {"input_tokens": 1000,
+                                                                                            "output_tokens": 50}},
+                "rate_limits": {"plan_type": "plus", "primary": {"used_percent": 12.0, "window_minutes": 300,
+                                                                 "resets_at": 1}}}},
+            codex_turn("u2", "gpt-6", "low"),
+            codex_record("resp2", "u2", 200, 0, 20),
+        ]
+        write_jsonl(p, rows)
+        # Arşive taşınmış kopya: aynı response_id'ler tekrar sayılmamalı.
+        write_jsonl(os.path.join(self.codex, "archived_sessions", "rollout-a.jsonl"), rows)
+        self.store.refresh()
+        s, c = self.clients()
+        zed = c[("codex", "zed")]
+        self.assertEqual(zed.label, "ACP (Zed)")
+        self.assertEqual(s.total.total, 1050 + 220)
+        t = zed.threads[0]
+        self.assertEqual(t.title, "selam")
+        self.assertEqual(t.branch, "dev")
+        self.assertEqual(t.model_usage["gpt-5.5"].cache_read, 800)
+        self.assertEqual(t.model_usage["gpt-5.5"].input, 200)
+        self.assertEqual(t.model_usage["gpt-6"].total, 220)
+        self.assertEqual(t.efforts, {"high", "low"})
+        self.assertAlmostEqual(t.tools["exec_command"], 525)
+        self.assertEqual(s.limits.plan, "plus")
+        self.assertEqual(s.limits.primary.used_percent, 12.0)
+
+    def test_codex_legacy_token_count_fallback(self):
+        p = os.path.join(self.codex, "sessions", "2025", "01", "01", "rollout-old.jsonl")
+
+        def tc(total, last):
+            return {"timestamp": "2025-01-01T10:00:00Z", "type": "event_msg", "payload": {
+                "type": "token_count",
+                "info": {"total_token_usage": {"total_tokens": total},
+                         "last_token_usage": {"input_tokens": last, "output_tokens": 0}}}}
+
+        write_jsonl(p, [codex_meta("old", "codex_cli_rs"), codex_turn("u", "gpt-5", ""), tc(100, 100), tc(100, 100),
+                        tc(250, 150)])
+        self.store.refresh()
+        s, c = self.clients()
+        self.assertEqual(c[("codex", "codex_cli_rs")].label, "CLI")
+        self.assertEqual(s.total.total, 250)
+
+    def test_incremental_read_and_partial_line(self):
+        p = os.path.join(self.claude, "projects", "x", "s.jsonl")
+        first = claude_msg("m1", "r1", "s", "claude-vscode", output_tokens=5)
+        second = json.dumps(claude_msg("m2", "r2", "s", "claude-vscode", output_tokens=7))
+        write_jsonl(p, [first], partial=second[:20])
+        self.store.refresh()
+        self.assertEqual(self.store.summarize("all").total.total, 5)
+        with open(p, "a", encoding="utf-8") as fh:
+            fh.write(second[20:] + "\n")
+        os.utime(p, (1e9, 2e9))
+        self.assertTrue(self.store.refresh())
+        self.assertEqual(self.store.summarize("all").total.total, 12)
+        self.assertFalse(self.store.refresh())
+
+    def test_range_filter(self):
+        p = os.path.join(self.claude, "projects", "x", "s.jsonl")
+        write_jsonl(p, [claude_msg("m1", "r1", "s", "cli", ts="2020-01-01T00:00:00Z", output_tokens=5)])
+        self.store.refresh()
+        self.assertEqual(self.store.summarize("today").total.total, 0)
+        self.assertEqual(self.store.summarize("all").total.total, 5)
+
+
+if __name__ == "__main__":
+    unittest.main()

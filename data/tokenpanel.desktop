@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Token Paneli
+GenericName=Token kullanımı
+Comment=Claude Code ve Codex token kullanımını menü çubuğunda gösterir
+Exec=tokenpanel
+Icon=tokenpanel
+Terminal=false
+Categories=Development;Utility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

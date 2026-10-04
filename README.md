@@ -36,7 +36,7 @@ The choice is remembered.
 
 ### Windows
 
-Download `TokenPanel.exe` from the [Releases](https://github.com/sucuklutank123456789-coder/Token/releases) page
+Download `TokenPanel.exe` from the [Releases](https://github.com/sucuklutank123456789-coder/token-panel/releases) page
 (or, for the latest build, from the newest successful run under **Actions → Build → Artifacts**) and run it.
 It is a single file; nothing is installed and Python is not needed.
 
@@ -54,8 +54,8 @@ Windows. Terminal output works too (in PowerShell): `.\TokenPanel.exe --dump | O
 ### Linux, any distribution (recommended)
 
 ```bash
-git clone https://github.com/sucuklutank123456789-coder/Token.git
-cd Token
+git clone https://github.com/sucuklutank123456789-coder/token-panel.git
+cd token-panel
 ./install.sh             # add --autostart to start it on login
 ```
 
@@ -82,7 +82,7 @@ To update: `git pull && ./install.sh`.
 ### Arch package
 
 ```bash
-cd Token/packaging/arch
+cd token-panel/packaging/arch
 makepkg -si
 ```
 

@@ -33,6 +33,7 @@ CODEX_CLIENTS = {
 # Panelde gösterilen "token" sayısının tanımı.
 METRICS = {
     "io": "Girdi + çıktı",
+    "app": "Claude uygulamasıyla aynı",
     "new": "Girdi + çıktı + önbelleğe yazma",
     "raw": "Ham (önbellekten okunan dahil)",
 }
@@ -57,6 +58,9 @@ class Usage:
     cache_write: int = 0
     output: int = 0
     reasoning: int = 0
+    # Claude uygulamasının istatistik ekranının saydığı girdi + çıktı: aynı yanıtın log'a
+    # bölünerek yazılan her satırı ayrı sayılır (tekilleştirilmez). Codex'te io ile aynıdır.
+    app_io: float = 0
 
     @property
     def total(self) -> int:
@@ -68,7 +72,10 @@ class Usage:
         io : önbellek hariç girdi + çıktı (Codex CLI'ın gösterdiği toplamla aynı tanım)
         new: io + önbelleğe yazılan girdi
         raw: her şey; önbellekten tekrar tekrar okunan bağlam da dahil
+        app: Claude uygulamasının gösterdiği "Total tokens" ile aynı yöntem
         """
+        if metric == "app":
+            return self.app_io
         if metric == "raw":
             return self.total
         if metric == "new":
@@ -76,7 +83,10 @@ class Usage:
         return self.input + self.output
 
     def scaled(self, f: float) -> "Usage":
-        return Usage(self.input * f, self.cache_read * f, self.cache_write * f, self.output * f, self.reasoning * f)
+        return Usage(
+            self.input * f, self.cache_read * f, self.cache_write * f, self.output * f, self.reasoning * f,
+            self.app_io * f,
+        )
 
     def add(self, other: "Usage") -> None:
         self.input += other.input
@@ -84,6 +94,7 @@ class Usage:
         self.cache_write += other.cache_write
         self.output += other.output
         self.reasoning += other.reasoning
+        self.app_io += other.app_io
 
     def merge_max(self, other: "Usage") -> None:
         self.input = max(self.input, other.input)

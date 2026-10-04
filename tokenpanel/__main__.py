@@ -15,7 +15,8 @@ def main(argv: list[str] | None = None) -> int:
         "--metric",
         choices=list(METRICS),
         default=DEFAULT_METRIC,
-        help="--dump için ölçü: io=girdi+çıktı, new=+önbelleğe yazma, raw=önbellek okuma dahil",
+        help="--dump için ölçü: io=girdi+çıktı, app=Claude uygulamasıyla aynı, new=+önbelleğe yazma, "
+        "raw=önbellek okuma dahil",
     )
     ap.add_argument("--show", action="store_true", help="Açılışta paneli de göster")
     ap.add_argument("--claude-dir", action="append", help="Claude yapılandırma dizini (varsayılan ~/.claude)")

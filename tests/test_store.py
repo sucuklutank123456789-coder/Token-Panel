@@ -111,6 +111,8 @@ class StoreTest(unittest.TestCase):
         # Varsayılan ölçü önbellekten okunanı saymaz: 10+5 + 20 + 7.
         self.assertEqual(s.total.value("io"), 42)
         self.assertEqual(s.total.value("raw"), 142)
+        # Uygulama yöntemi bölünmüş satırları ayrı sayar: m1 iki kez (15+15) + 20 + 7.
+        self.assertEqual(s.total.value("app"), 57)
         self.assertEqual(c[("claude", "sdk-ts")].usage.total, 7)
 
     def test_codex_records_models_tools_and_limits(self):

@@ -26,6 +26,7 @@ Ajanlar her model çağrısında konuşmanın tamamını yeniden gönderir; bunu
 | Ölçü | Sayılanlar |
 |---|---|
 | Girdi + çıktı (varsayılan) | önbellek dışı girdi + çıktı (düşünme dahil) |
+| Claude uygulamasıyla aynı | Claude Desktop'taki "Total tokens" ile aynı yöntem: Claude'un bir yanıtı log'a bölerek yazdığı her satır ayrı sayılır (Claude için ~1,5–2,5 kat yüksek çıkar; Codex'te girdi + çıktı ile aynı) |
 | Girdi + çıktı + önbelleğe yazma | yukarıdakiler + önbelleğe ilk kez yazılan bağlam |
 | Ham | her şey; önbellekten tekrar tekrar okunan bağlam da dahil |
 
@@ -70,7 +71,7 @@ python -m tokenpanel          # depo kökünden
 Terminal çıktısı (panel açmadan):
 
 ```bash
-tokenpanel --dump --range 7d --metric io   # io | new | raw
+tokenpanel --dump --range 7d --metric io   # io | app | new | raw
 ```
 
 ## Veri kaynakları

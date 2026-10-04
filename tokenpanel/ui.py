@@ -569,7 +569,9 @@ class Panel(QWidget):
         menu = self._metric_menu
         menu.clear()
         hints = {
-            "io": "Önerilen. Codex CLI'ın gösterdiği toplamla aynı tanım.",
+            "io": "Önerilen. Her model yanıtı bir kez sayılır; Codex CLI'ın toplamıyla aynı tanım.",
+            "app": "Claude uygulamasındaki 'Total tokens' ile aynı yöntem: log'a bölünerek yazılan "
+            "aynı yanıtın her satırı ayrı sayılır, bu yüzden Claude için daha yüksek çıkar.",
             "new": "Önbelleğe ilk kez yazılan bağlam da sayılır.",
             "raw": "Her çağrıda önbellekten tekrar okunan bağlam da sayılır; çok büyük çıkar.",
         }

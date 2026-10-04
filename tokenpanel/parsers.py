@@ -174,6 +174,9 @@ class ClaudeFile(JsonlFile):
             for b in msg.get("content") or []
             if isinstance(b, dict) and b.get("type") in ("tool_use", "server_tool_use")
         ]
+        # Uygulamanın istatistiği ana dosyadaki sidechain satırlarını saymaz, alt ajan dosyalarını sayar.
+        counted = not d.get("isSidechain") or f"{os.sep}subagents{os.sep}" in self.path
+        u.app_io = u.input + u.output if counted else 0
         key = f"claude:{msg.get('id')}:{d.get('requestId')}"
         ev = Event(
             source="claude",
@@ -188,6 +191,7 @@ class ClaudeFile(JsonlFile):
         existing = sink.add_event(key, ev)
         if existing is not None:
             existing.usage.merge_max(u)
+            existing.usage.app_io += u.app_io
             existing.tools.extend(tools)
 
         t = sink.thread("claude", sid)
@@ -320,6 +324,7 @@ class CodexFile(JsonlFile):
             output=_int(u, "output_tokens"),
             reasoning=_int(u, "reasoning_output_tokens"),
         )
+        usage.app_io = usage.input + usage.output
         ev = Event(
             source="codex",
             client=self.client,

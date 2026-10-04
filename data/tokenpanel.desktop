@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Token Paneli
-GenericName=Token kullanımı
-Comment=Claude Code ve Codex token kullanımını menü çubuğunda gösterir
+Name=Token Panel
+GenericName=Token usage
+Comment=Shows Claude Code and Codex token usage in the system tray
 Exec=tokenpanel
 Icon=tokenpanel
 Terminal=false

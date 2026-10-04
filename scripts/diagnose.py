@@ -1,7 +1,7 @@
-"""Claude Code token sayılarını farklı tanımlarla hesaplar (yalnızca sayı yazdırır).
+"""Computes Claude Code token counts under different definitions (prints numbers only).
 
-Kullanım: python3 scripts/teshis.py
-Panelin gösterdiği sayı ile Claude uygulamasının gösterdiği sayı arasındaki farkı bulmak için.
+Usage: python3 scripts/diagnose.py
+Helps explain differences between the panel and the numbers the Claude app shows.
 """
 
 import collections
@@ -14,7 +14,7 @@ import time
 
 base = os.path.expanduser(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude"))
 files = glob.glob(base + "/projects/**/*.jsonl", recursive=True)
-print(f"{len(files)} log dosyası bulundu ({base}/projects), okunuyor…", flush=True)
+print(f"Found {len(files)} log files ({base}/projects), reading…", flush=True)
 
 seen = set()
 io = collections.Counter()
@@ -57,7 +57,7 @@ for i, f in enumerate(files, 1):
             io_by_model[msg.get("model") or "?"] += v
             new[ep] += v + u.get("cache_creation_input_tokens", 0)
     if i % 200 == 0:
-        print(f"  {i}/{len(files)} dosya…", flush=True)
+        print(f"  {i}/{len(files)} files…", flush=True)
 
 
 def m(n):
@@ -70,23 +70,23 @@ bg = sum(
     for mdl, x in mu.items()
     if "haiku" in mdl
 )
-print(f"\nSüre: {time.time() - start:.1f} sn")
+print(f"\nTook {time.time() - start:.1f} s")
 if dates:
-    print("En eski log:", datetime.date.fromtimestamp(min(dates)))
-print("\nGirdi + çıktı (istemci bazında):")
+    print("Oldest log:", datetime.date.fromtimestamp(min(dates)))
+print("\nInput + output, deduplicated (by client):")
 for k, v in io.most_common():
     print(f"  {k:20} {m(v)}")
-print(f"  {'TOPLAM':20} {m(sum(io.values()))}")
-print("\nGirdi + çıktı (model bazında):")
+print(f"  {'TOTAL':20} {m(sum(io.values()))}")
+print("\nInput + output, deduplicated (by model):")
 for k, v in io_by_model.most_common():
     print(f"  {k:28} {m(v)}")
-print("\n+ önbelleğe yazma dahil:", m(sum(new.values())))
-print("Tekilleştirmesiz girdi + çıktı:", m(nodedup))
-print("Arka plan Haiku (cost-state):", m(bg))
+print("\nIncluding cache writes:", m(sum(new.values())))
+print("Input + output without deduplication:", m(nodedup))
+print("Background Haiku (cost-state):", m(bg))
 
-# --- Claude Code istatistik ekranının yöntemi -------------------------------------
-# projects/<p>/*.jsonl + projects/<p>/<oturum>/subagents/agent-*.jsonl;
-# ana dosyalarda sidechain satırları atlanır, satırlar tekilleştirilmez.
+# --- The method used by Claude Code's stats screen --------------------------------
+# projects/<p>/*.jsonl + projects/<p>/<session>/subagents/agent-*.jsonl;
+# sidechain lines in main files are skipped, lines are not deduplicated.
 stat_files = []
 for proj in glob.glob(base + "/projects/*/"):
     stat_files += glob.glob(proj + "*.jsonl")
@@ -122,29 +122,29 @@ for f in stat_files:
             st["cache_write"] += u.get("cache_creation_input_tokens") or 0
     if had and not sub:
         sessions += 1
-print("\nClaude istatistik yöntemiyle (tekilleştirmesiz):")
-print("  oturum:", sessions, "| satır türleri:", dict(types.most_common(6)))
-print("  user+assistant satırı:", types["user"] + types["assistant"])
-print("  girdi:", m(st["input"]), " çıktı:", m(st["output"]), " önbellek okuma:", m(st["cache_read"]),
-      " önbellek yazma:", m(st["cache_write"]))
-print("  girdi+çıktı:", m(st["input"] + st["output"]),
-      " | +önbellek yazma:", m(st["input"] + st["output"] + st["cache_write"]))
+print("\nClaude stats method (no deduplication):")
+print("  sessions:", sessions, "| line types:", dict(types.most_common(6)))
+print("  user+assistant lines (messages):", types["user"] + types["assistant"])
+print("  input:", m(st["input"]), " output:", m(st["output"]), " cache reads:", m(st["cache_read"]),
+      " cache writes:", m(st["cache_write"]))
+print("  input+output:", m(st["input"] + st["output"]),
+      " | +cache writes:", m(st["input"] + st["output"] + st["cache_write"]))
 
 p = base + "/stats-cache.json"
 if os.path.exists(p):
     try:
         s = json.load(open(p))
-        print("\nstats-cache.json anahtarları:", list(s))
+        print("\nstats-cache.json keys:", list(s))
         for mdl, x in (s.get("modelUsage") or {}).items():
             print("  ", mdl, {k: v for k, v in x.items() if isinstance(v, (int, float))})
     except ValueError:
-        print("\nstats-cache.json okunamadı")
+        print("\nstats-cache.json could not be read")
 else:
-    print("\nstats-cache.json yok")
+    print("\nno stats-cache.json")
 
 sp = base + "/settings.json"
 try:
-    print("cleanupPeriodDays:", json.load(open(sp)).get("cleanupPeriodDays", "ayarlanmamış (varsayılan 30 gün)"))
+    print("cleanupPeriodDays:", json.load(open(sp)).get("cleanupPeriodDays", "not set (default 30 days)"))
 except (OSError, ValueError):
-    print("cleanupPeriodDays: settings.json yok (varsayılan 30 gün)")
+    print("cleanupPeriodDays: no settings.json (default 30 days)")
 sys.exit(0)

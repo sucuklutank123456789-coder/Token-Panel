@@ -84,14 +84,14 @@ class StoreTest(unittest.TestCase):
         write_jsonl(
             p,
             [
-                {"type": "user", "sessionId": "s1", "message": {"content": "merhaba dünya"}},
-                # Aynı yanıt iki satıra bölünmüş: bir kez sayılmalı, araçlar birleşmeli.
+                {"type": "user", "sessionId": "s1", "message": {"content": "hello world"}},
+                # One response split over two lines: counted once, tools merged.
                 claude_msg("m1", "r1", "s1", "cli", tools=["Bash"], input_tokens=10, output_tokens=5,
                            cache_read_input_tokens=100),
                 claude_msg("m1", "r1", "s1", "cli", tools=["Read"], input_tokens=10, output_tokens=5,
                            cache_read_input_tokens=100),
                 claude_msg("m2", "r2", "s1", "cli", model="claude-sonnet-5-5", output_tokens=20),
-                {"type": "ai-title", "aiTitle": "Başlık", "sessionId": "s1"},
+                {"type": "ai-title", "aiTitle": "Title", "sessionId": "s1"},
             ],
         )
         p2 = os.path.join(self.claude, "projects", "-home-u-proj", "s2.jsonl")
@@ -103,15 +103,15 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(cli.label, "CLI")
         self.assertEqual(cli.usage.total, 135)
         t = cli.threads[0]
-        self.assertEqual(t.title, "Başlık")
+        self.assertEqual(t.title, "Title")
         self.assertEqual(t.branch, "main")
         self.assertEqual(set(t.model_usage), {"claude-opus-5-5", "claude-sonnet-5-5"})
         self.assertAlmostEqual(t.tools["Bash"].total, 57.5)
         self.assertAlmostEqual(t.tools["Read"].total, 57.5)
-        # Varsayılan ölçü önbellekten okunanı saymaz: 10+5 + 20 + 7.
+        # io leaves out cache reads: 10+5 + 20 + 7.
         self.assertEqual(s.total.value("io"), 42)
         self.assertEqual(s.total.value("raw"), 142)
-        # Uygulama yöntemi bölünmüş satırları ayrı sayar: m1 iki kez (15+15) + 20 + 7.
+        # The app method counts split lines separately: m1 twice (15+15) + 20 + 7.
         self.assertEqual(s.total.value("app"), 57)
         self.assertEqual(c[("claude", "sdk-ts")].usage.total, 7)
 
@@ -128,7 +128,7 @@ class StoreTest(unittest.TestCase):
             codex_call("exec_command"),
             codex_call("apply_patch"),
             codex_record("resp1", "u1", 1000, 800, 50, 10),
-            # Kayıt varken token_count yok sayılmalı (çift sayım olmasın).
+            # With records present token_count must be ignored (no double counting).
             {"timestamp": "2026-10-04T10:01:00Z", "type": "event_msg", "payload": {
                 "type": "token_count",
                 "info": {"total_token_usage": {"total_tokens": 1050}, "last_token_usage": {"input_tokens": 1000,
@@ -139,7 +139,7 @@ class StoreTest(unittest.TestCase):
             codex_record("resp2", "u2", 200, 0, 20),
         ]
         write_jsonl(p, rows)
-        # Arşive taşınmış kopya: aynı response_id'ler tekrar sayılmamalı.
+        # Archived copy: the same response_ids must not be counted again.
         write_jsonl(os.path.join(self.codex, "archived_sessions", "rollout-a.jsonl"), rows)
         self.store.refresh()
         s, c = self.clients()
@@ -159,7 +159,7 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(s.limits.primary.used_percent, 12.0)
 
     def test_codex_app_metric_follows_codex_counter(self):
-        # Sıkıştırma (compaction) çağrısı kaydedilir ama Codex'in kendi sayacına girmez.
+        # The compaction call is recorded but not added to Codex's own counter.
         def tc(inp, cached, out, last_inp, last_cached, last_out):
             return {"timestamp": "2026-10-04T10:02:00Z", "type": "event_msg", "payload": {
                 "type": "token_count", "info": {

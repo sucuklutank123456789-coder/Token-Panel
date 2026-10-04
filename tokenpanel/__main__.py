@@ -8,19 +8,19 @@ from .store import RANGES, Store
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="tokenpanel", description="Claude Code ve Codex token kullanım paneli")
-    ap.add_argument("--dump", action="store_true", help="Panel açmadan özeti terminale yaz")
-    ap.add_argument("--range", choices=list(RANGES), default="all", help="--dump için zaman aralığı")
+    ap = argparse.ArgumentParser(prog="tokenpanel", description="Tray panel for Claude Code and Codex token usage")
+    ap.add_argument("--dump", action="store_true", help="Print the summary to the terminal instead of opening the panel")
+    ap.add_argument("--range", choices=list(RANGES), default="all", help="Time range for --dump")
     ap.add_argument(
         "--metric",
         choices=list(METRICS),
         default=DEFAULT_METRIC,
-        help="--dump için ölçü: io=girdi+çıktı, app=Claude uygulamasıyla aynı, new=+önbelleğe yazma, "
-        "raw=önbellek okuma dahil",
+        help="Metric for --dump: app=same as the official apps, io=input+output, new=+cache writes, "
+        "raw=including cache reads",
     )
-    ap.add_argument("--show", action="store_true", help="Açılışta paneli de göster")
-    ap.add_argument("--claude-dir", action="append", help="Claude yapılandırma dizini (varsayılan ~/.claude)")
-    ap.add_argument("--codex-dir", help="Codex dizini (varsayılan ~/.codex)")
+    ap.add_argument("--show", action="store_true", help="Also open the panel on startup")
+    ap.add_argument("--claude-dir", action="append", help="Claude config directory (default ~/.claude)")
+    ap.add_argument("--codex-dir", help="Codex directory (default ~/.codex)")
     args = ap.parse_args(argv)
 
     def make_store() -> Store:

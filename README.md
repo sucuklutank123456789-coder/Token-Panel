@@ -1,38 +1,38 @@
-# Token Paneli
+# Token Panel
 
-Claude Code ve Codex'in ne kadar token kullandığını gösteren, menü çubuğunda (system tray) duran küçük bir Linux uygulaması.
-Hiçbir API'ye bağlanmaz; iki aracın bilgisayarınıza yazdığı oturum loglarını okur.
+A small Linux system tray app that shows how many tokens Claude Code and Codex use.
+It never talks to an API; it reads the session logs both tools write to your computer.
 
-## Ne gösterir?
+## What it shows
 
-Panel katman katman açılır:
+The panel opens layer by layer:
 
-1. **Özet** — seçilen aralıktaki (Bugün / 7 gün / 30 gün / Tümü) toplam token, Claude Code ve Codex payı,
-   Codex'in 5 saatlik ve haftalık kullanım limiti.
-2. **Detaylar** — her araç için istemci bazında döküm: CLI, Desktop, VS Code eklentisi, ACP (Zed);
-   her birinde hangi modellerin kullanıldığı ve kaç thread olduğu.
-3. **Thread'ler** — seçilen istemcideki thread'ler: başlık, proje, model, son kullanım.
-4. **Thread detayı** — modele göre, token türüne göre (önbellek / yeni girdi / çıktı / düşünme) ve
-   "ne üzerinde" (Bash, Read, exec_command, apply_patch… araçlarına göre yaklaşık) döküm.
+1. **Overview** — total tokens for the selected range (Today / 7d / 30d / All), the Claude Code vs Codex
+   share, and Codex's 5-hour and weekly rate limits.
+2. **Details** — per-tool breakdown by client: CLI, Desktop, VS Code extension, ACP (Zed);
+   the models used and the number of threads for each.
+3. **Threads** — the threads of the selected client: title, project, models, last activity.
+4. **Thread details** — breakdown by model, by token type (cache / new input / output / thinking) and
+   "spent on" (approximate, by tool: Bash, Read, exec_command, apply_patch…).
 
-Tray simgesinin üzerine gelince bugünün toplamı görünür. Satırların üzerine gelince tam sayılar çıkar.
+Hover the tray icon for today's total; hover any row for the exact numbers.
 
-### Hangi token'lar sayılıyor?
+### Which tokens are counted?
 
-Ajanlar her model çağrısında konuşmanın tamamını yeniden gönderir; bunun büyük kısmı önbellekten okunur.
-Önbellekten okunanları da saymak toplamı 30–150 kat şişirir. Bu yüzden panelin varsayılan ölçüsü
-**Claude uygulamasıyla aynı**dır (Claude Desktop'taki "Total tokens" ile aynı sonucu verir). Özet ekranındaki **Ölçü** düğmesinden değiştirilebilir:
+Agents resend the whole conversation on every model call, and most of it is read from the cache.
+Counting cache reads inflates totals 30–150×, so the default metric is **Same as the official apps**.
+It can be changed with the **Metric** button on the overview:
 
-| Ölçü | Sayılanlar |
+| Metric | What is counted |
 |---|---|
-| Claude uygulamasıyla aynı (varsayılan) | Claude Desktop'taki "Total tokens" ile aynı yöntem: Claude'un bir yanıtı log'a bölerek yazdığı her satır ayrı sayılır (Claude için ~1,5–2,5 kat yüksek çıkar). Codex'te Codex'in kendi sayacıyla aynı: sohbet sıkıştırma (compaction) özet çağrıları sayılmaz |
-| Girdi + çıktı | her model çağrısı bir kez sayılır: önbellek dışı girdi + çıktı (düşünme dahil), sıkıştırma çağrıları dahil — gerçek harcama |
-| Girdi + çıktı + önbelleğe yazma | yukarıdakiler + önbelleğe ilk kez yazılan bağlam |
-| Ham | her şey; önbellekten tekrar tekrar okunan bağlam da dahil |
+| Same as the official apps (default) | Claude: the same method as "Total tokens" in the Claude app — every transcript line of a response that Claude Code split across lines is counted (≈1.5–2.5× higher for Claude). Codex: the same as Codex's own counter — conversation compaction summary calls are not counted |
+| Input + output | every model call counted once: non-cached input + output (thinking included), compaction calls included — actual spend |
+| Input + output + cache writes | the above plus context written to the cache for the first time |
+| Raw | everything, including context re-read from the cache on every call |
 
-Seçim hatırlanır. Satırların üzerine gelince tüm türlerin dökümü görünür.
+The choice is remembered.
 
-## Kurulum (Arch tabanlı dağıtımlar)
+## Install (Arch-based distributions)
 
 ```bash
 git clone https://github.com/sucuklutank123456789-coder/Token.git
@@ -40,54 +40,61 @@ cd Token/packaging/arch
 makepkg -si
 ```
 
-Ardından uygulama menüsünden **Token Paneli**'ni açın ya da terminalden `tokenpanel` çalıştırın.
+Then open **Token Panel** from your app menu, or run `tokenpanel` in a terminal.
 
-Oturum açılışında otomatik başlasın isterseniz:
+To start it on login:
 
 ```bash
 mkdir -p ~/.config/autostart
 cp /usr/share/applications/tokenpanel.desktop ~/.config/autostart/
 ```
 
-### Paketlemeden çalıştırmak
+To update: `git pull`, then `makepkg -sif` in `packaging/arch` and restart the app.
+
+### Running without packaging
 
 ```bash
 sudo pacman -S pyside6
-python -m tokenpanel          # depo kökünden
+python -m tokenpanel          # from the repository root
 ```
 
-### Masaüstü ortamı notları
+### Desktop environment notes
 
-- **KDE, XFCE, Cinnamon, LXQt**: tray doğrudan çalışır.
-- **Hyprland / Sway**: waybar'da `tray` modülü açık olmalı.
-- **GNOME**: tray için `gnome-shell-extension-appindicator` eklentisi gerekir. Tray yoksa uygulama normal pencere olarak açılır.
+- **KDE, XFCE, Cinnamon, LXQt**: the tray works out of the box.
+- **Hyprland / Sway**: enable the `tray` module in waybar.
+- **GNOME**: needs `gnome-shell-extension-appindicator` for the tray. Without a tray the app opens as a normal window.
 
-## Kullanım
+## Usage
 
-- Sol tık: paneli aç/kapat. Panel dışına tıklayınca veya `Esc` ile kapanır; `Backspace` bir seviye geri gider.
-- Sağ tık: Paneli aç / Yenile / Çıkış.
-- Loglar 5 saniyede bir kontrol edilir; yalnızca yeni eklenen satırlar okunur.
+- Left click: open/close the panel. It closes when you click elsewhere or press `Esc`; `Backspace` goes back one level.
+- Right click: Open panel / Refresh / Quit.
+- Logs are checked every 5 seconds; only newly appended lines are read.
 
-Terminal çıktısı (panel açmadan):
+Terminal output (without opening the panel):
 
 ```bash
 tokenpanel --dump --range 7d --metric app   # app | io | new | raw
 ```
 
-## Veri kaynakları
+## Data sources
 
-| Araç | Log yeri | İstemci alanı |
+| Tool | Log location | Client field |
 |---|---|---|
-| Claude Code | `~/.claude/projects/**/*.jsonl` (`CLAUDE_CONFIG_DIR` destekli) | `entrypoint`: `cli`, `claude-desktop`, `claude-vscode`, `sdk-ts` (Zed ACP) |
-| Codex | `~/.codex/sessions/**/*.jsonl`, `~/.codex/archived_sessions/` (`CODEX_HOME` destekli) | `originator`: `codex-tui`, `Codex Desktop`, `codex_vscode`, `zed` |
+| Claude Code | `~/.claude/projects/**/*.jsonl` (honours `CLAUDE_CONFIG_DIR`) | `entrypoint`: `cli`, `claude-desktop`, `claude-vscode`, `sdk-ts` (Zed ACP) |
+| Codex | `~/.codex/sessions/**/*.jsonl`, `~/.codex/archived_sessions/` (honours `CODEX_HOME`) | `originator`: `codex-tui`, `Codex Desktop`, `codex_vscode`, `zed` |
 
-Bilinen sınırlar:
+Known limitations:
 
-- Claude tarafında `sdk-ts`, Agent SDK kullanan her aracı kapsar; yalnızca Zed kullanıyorsanız ACP'ye denk gelir.
-- Codex Desktop her sohbeti otomatik bir klasörde açtığı için oradaki "proje" adı o klasörün adıdır.
-- "Ne üzerinde" dökümü yaklaşıktır: bir model çağrısının token'ı o çağrıda kullanılan araçlara eşit bölünür.
+- Only usage on this computer is shown; cloud sessions (claude.ai/code, Codex cloud tasks) leave no local logs.
+- Claude Code deletes transcripts older than 30 days by default (`cleanupPeriodDays` in `~/.claude/settings.json`).
+- On the Claude side `sdk-ts` covers every tool built on the Agent SDK; it equals ACP only if Zed is the only one you use.
+- Codex Desktop opens each chat in an auto-created folder, so the "project" there is that folder's name.
+- "Spent on" is approximate: a model call's tokens are split evenly across the tools used in that call.
 
-## Geliştirme
+`scripts/diagnose.py` prints Claude Code token counts under each definition, which helps compare the panel
+with the Claude app.
+
+## Development
 
 ```bash
 python -m unittest discover -s tests -t .

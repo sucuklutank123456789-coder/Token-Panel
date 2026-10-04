@@ -1,7 +1,7 @@
-"""Claude Code ve Codex JSONL loglarını artımlı (incremental) okuyan ayrıştırıcılar.
+"""Incremental parsers for Claude Code and Codex JSONL logs.
 
-Her dosya için bir ayrıştırıcı nesnesi tutulur; dosya büyüdükçe yalnızca yeni
-satırlar okunur. Ayrıştırıcılar ortak bir `Sink`e olay ve thread bilgisi yazar.
+One parser object is kept per file; as a file grows only the new lines are read.
+Parsers write events and thread info into a shared `Sink`.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from .model import CodexLimits, Event, RateWindow, ThreadInfo, Usage
 
 class Sink(Protocol):
     def add_event(self, key: str, event: Event) -> Event | None:
-        """Yeni olayı ekler; aynı anahtar daha önce görüldüyse mevcut olayı döner."""
+        """Adds a new event; if the key was seen before, returns the existing event."""
 
     def thread(self, source: str, thread_id: str) -> ThreadInfo: ...
 
@@ -40,9 +40,9 @@ def _int(d: dict, key: str) -> int:
 
 
 def _prompt_text(text: str) -> str:
-    """Kullanıcı mesajından başlık adayı: sistem/bağlam bloklarını ayıklar."""
+    """Title candidate from a user message, skipping system/context blocks."""
     text = text.strip()
-    # Codex VS Code eklentisi isteğin önüne IDE bağlamı ekler.
+    # The Codex VS Code extension prepends IDE context to the request.
     for marker in ("## My request for Codex:", "## My request:"):
         if marker in text:
             text = text.split(marker, 1)[1].strip()
@@ -52,7 +52,7 @@ def _prompt_text(text: str) -> str:
 
 
 def _blended(u: dict) -> int:
-    """Codex'in gösterdiği toplam: önbellek dışı girdi + çıktı."""
+    """The total Codex shows: non-cached input + output."""
     return max(_int(u, "input_tokens") - _int(u, "cached_input_tokens"), 0) + _int(u, "output_tokens")
 
 
@@ -62,7 +62,7 @@ def _short(text: str, limit: int = 80) -> str:
 
 
 class JsonlFile:
-    """Dosyayı son kalınan yerden okur; yarım kalan son satırı bir sonraki tura bırakır."""
+    """Reads a file from where it left off; a half-written last line waits for the next round."""
 
     def __init__(self, path: str):
         self.path = path
@@ -77,7 +77,7 @@ class JsonlFile:
             return False
         if st.st_size == self.size and st.st_mtime == self.mtime:
             return False
-        if st.st_size < self.offset:  # dosya kısalmış/yeniden yazılmış
+        if st.st_size < self.offset:  # file was truncated/rewritten
             self.offset = 0
             self.reset()
         self.size, self.mtime = st.st_size, st.st_mtime
@@ -117,10 +117,10 @@ class JsonlFile:
 
 
 class ClaudeFile(JsonlFile):
-    """~/.claude/projects/<proje>/<oturum>.jsonl
+    """~/.claude/projects/<project>/<session>.jsonl
 
-    Asistan yanıtları birden fazla satıra bölünebilir (her içerik bloğu ayrı satır,
-    aynı usage). Bu yüzden message.id + requestId ile tekilleştirilir.
+    An assistant response can be split across several lines (one per content block, each
+    carrying the same usage), so calls are deduplicated by message.id + requestId.
     """
 
     def handle(self, d: dict, sink: Sink) -> None:
@@ -134,7 +134,7 @@ class ClaudeFile(JsonlFile):
         elif kind == "custom-title" and d.get("customTitle"):
             sink.thread("claude", sid).title = _short(d["customTitle"])
         elif kind == "ai-title" and d.get("aiTitle"):
-            # İlk kullanıcı mesajından daha iyi bir başlık; onu ezer.
+            # A better title than the first user message; overrides it.
             sink.thread("claude", sid).fallback_title = _short(d["aiTitle"])
         elif kind == "user":
             self._user(d, sid, sink)
@@ -175,11 +175,11 @@ class ClaudeFile(JsonlFile):
             reasoning=_int(details, "thinking_tokens") if isinstance(details, dict) else 0,
         )
         tools = [
-            b.get("name") or "araç"
+            b.get("name") or "tool"
             for b in msg.get("content") or []
             if isinstance(b, dict) and b.get("type") in ("tool_use", "server_tool_use")
         ]
-        # Uygulamanın istatistiği ana dosyadaki sidechain satırlarını saymaz, alt ajan dosyalarını sayar.
+        # The app's stats skip sidechain lines in main files but count subagent files.
         counted = not d.get("isSidechain") or f"{os.sep}subagents{os.sep}" in self.path
         u.app_io = u.input + u.output if counted else 0
         key = f"claude:{msg.get('id')}:{d.get('requestId')}"
@@ -209,8 +209,8 @@ class ClaudeFile(JsonlFile):
 class CodexFile(JsonlFile):
     """~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
 
-    Yeni sürümler her API çağrısı için `token_usage_record` yazar. Eski sürümlerde
-    yalnızca birikimli `token_count` olayları vardır; o durumda onlara düşülür.
+    Newer versions write a `token_usage_record` per API call. Older versions only have
+    cumulative `token_count` events, which are used as a fallback.
     """
 
     def __init__(self, path: str):
@@ -226,7 +226,7 @@ class CodexFile(JsonlFile):
         self.pending_tools: list[str] = []
         self.has_records = False
         self.last_total = -1
-        # Codex'in kendi sayacı (token_count.total_token_usage); "uygulamayla aynı" ölçüsü için.
+        # Codex's own counter (token_count.total_token_usage), for the "app" metric.
         self.last_event: Event | None = None
         self.app_total: float | None = None
 
@@ -309,17 +309,18 @@ class CodexFile(JsonlFile):
             self._emit(f"codex:{self.thread_id}:{total}", d.get("timestamp"), last, self.model, self.effort, sink)
 
     def _app_counter(self, info: dict) -> None:
-        """Codex'in kullanıcıya gösterdiği toplamdaki artışı son model çağrısına yazar.
+        """Credits the growth of the total Codex shows to the latest model call.
 
-        Codex, sohbeti sıkıştırırken yaptığı özetleme çağrısını token_usage_record olarak
-        kaydeder ama kendi sayacına eklemez. Böylece bu ölçü Codex'in gösterdiğiyle aynı olur.
+        Codex logs the summary call it makes when compacting a conversation as a
+        token_usage_record but leaves it out of its own counter; this keeps the metric equal
+        to what Codex shows.
         """
         total = info.get("total_token_usage")
         if not isinstance(total, dict):
             return
         blended = _blended(total)
         if self.app_total is None:
-            # Devam ettirilen oturumlarda sayaç önceki dosyadan sürer; başlangıcı buna göre al.
+            # In resumed sessions the counter carries over from the previous file; start from there.
             last = info.get("last_token_usage")
             self.app_total = blended - (_blended(last) if isinstance(last, dict) else 0)
         delta = blended - self.app_total
@@ -354,7 +355,7 @@ class CodexFile(JsonlFile):
             output=_int(u, "output_tokens"),
             reasoning=_int(u, "reasoning_output_tokens"),
         )
-        # Kayıtlı sürümlerde app_io, ardından gelen token_count ile doldurulur.
+        # With records, app_io is filled in by the token_count that follows.
         usage.app_io = 0 if self.has_records else usage.input + usage.output
         ev = Event(
             source="codex",
@@ -367,7 +368,7 @@ class CodexFile(JsonlFile):
             tools=self.pending_tools,
         )
         self.pending_tools = []
-        # Aynı çağrı başka bir dosyada (ör. arşiv kopyası) zaten sayıldıysa sayaç ona yazılmaz.
+        # If this call was already counted from another file (e.g. an archived copy), skip the counter.
         self.last_event = ev if sink.add_event(str(key), ev) is None else None
 
     def _limits(self, d: dict, p: dict, sink: Sink) -> None:

@@ -1,10 +1,10 @@
-"""Menü çubuğu (system tray) uygulaması — PySide6.
+"""System tray app — PySide6.
 
-Seviyeler:
-  0  Özet       : toplam token, Claude/Codex payı, Codex limitleri
-  1  İstemciler : Claude/Codex × CLI/Desktop/VS Code/ACP, kullanılan modeller
-  2  Thread'ler : seçilen istemcideki thread'ler
-  3  Thread     : model, token türü ve "ne üzerinde" dökümü
+Levels:
+  0  Overview : total tokens, Claude/Codex share, Codex rate limits
+  1  Clients  : Claude/Codex × CLI/Desktop/VS Code/ACP, models used
+  2  Threads  : threads of the selected client
+  3  Thread   : breakdown by model, token type and "spent on"
 """
 
 from __future__ import annotations
@@ -94,11 +94,11 @@ def current_theme() -> Theme:
     return DARK if QGuiApplication.palette().window().color().lightness() < 128 else LIGHT
 
 
-# --- Arka plan işçisi -------------------------------------------------------------
+# --- Background worker -------------------------------------------------------------
 
 
 class Worker(QObject):
-    updated = Signal(object, object)  # (seçili aralık özeti, bugünün özeti)
+    updated = Signal(object, object)  # (summary for the selected range, summary for today)
 
     def __init__(self, make_store, metric: str):
         super().__init__()
@@ -123,7 +123,7 @@ class Worker(QObject):
 
     @Slot()
     def stop(self):
-        # Zamanlayıcı kendi iş parçacığında durdurulup silinmeli.
+        # The timer must be stopped and deleted in its own thread.
         if self.timer is not None:
             self.timer.stop()
             self.timer.setParent(None)
@@ -153,11 +153,11 @@ class Worker(QObject):
         self.updated.emit(current, today)
 
 
-# --- Küçük bileşenler -------------------------------------------------------------
+# --- Small widgets -------------------------------------------------------------
 
 
 class Bar(QWidget):
-    """İnce oran çubuğu. segments: [(değer, renk)]; aralarında 2px yüzey boşluğu."""
+    """Thin ratio bar. segments: [(value, color)], with a 2px surface gap between them."""
 
     def __init__(self, theme: Theme, height: int = 6):
         super().__init__()
@@ -221,7 +221,7 @@ def label(text: str, color: str, size: int = 13, bold: bool = False, elide: bool
 
 
 class Row(QFrame):
-    """Tıklanabilir satır: başlık + alt satır + değer + oran çubuğu."""
+    """Clickable row: title + subtitle + value + ratio bar."""
 
     def __init__(self, theme, title, subtitle, value, bar_segments, whole, tooltip="", on_click=None, dot=None):
         super().__init__()
@@ -263,11 +263,11 @@ class Row(QFrame):
 
 def usage_tooltip(u: Usage) -> str:
     return (
-        f"Ham toplam: {fmt.full(u.total)}\n"
-        f"Yeni girdi: {fmt.full(u.input)}\n"
-        f"Önbellekten okunan: {fmt.full(u.cache_read)}\n"
-        f"Önbelleğe yazılan: {fmt.full(u.cache_write)}\n"
-        f"Çıktı: {fmt.full(u.output)} (düşünme: {fmt.full(u.reasoning)})"
+        f"Raw total: {fmt.full(u.total)}\n"
+        f"New input: {fmt.full(u.input)}\n"
+        f"Cache reads: {fmt.full(u.cache_read)}\n"
+        f"Cache writes: {fmt.full(u.cache_write)}\n"
+        f"Output: {fmt.full(u.output)} (thinking: {fmt.full(u.reasoning)})"
     )
 
 
@@ -288,18 +288,18 @@ class Panel(QWidget):
     def __init__(self, metric: str = DEFAULT_METRIC):
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.metric_key = metric
-        self.setWindowTitle("Token Paneli")
+        self.setWindowTitle("Token Panel")
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
         self.theme = current_theme()
         self.summary: Summary | None = None
         self.range_key = "today"
-        # Gezinme durumu: anahtarlar üzerinden tutulur, veri yenilenince aynı sayfa yeniden çizilir.
+        # Navigation state is kept as keys, so a data refresh redraws the same page.
         self.level = 0
         self.sel_client: tuple[str, str] | None = None
         self.sel_thread: str | None = None
         self.hidden_at = 0.0
-        # Sayfalar her yenilemede yeniden çizilir; menü panele ait kalıcı nesnedir.
+        # Pages are rebuilt on every refresh; the menu is a persistent object owned by the panel.
         self._metric_menu = QMenu(self)
         self._build()
 
@@ -323,9 +323,9 @@ class Panel(QWidget):
         root.setContentsMargins(14, 12, 14, 10)
         root.setSpacing(10)
 
-        # Başlık + aralık seçici
+        # Title + range selector
         head = QHBoxLayout()
-        head.addWidget(label("Token Paneli", th.text, 14, True))
+        head.addWidget(label("Token Panel", th.text, 14, True))
         head.addStretch(1)
         self.range_group = QButtonGroup(self)
         seg_style = (
@@ -334,7 +334,7 @@ class Panel(QWidget):
             f"QPushButton:hover {{ background: {th.hover}; }}"
             f"QPushButton:checked {{ color: {th.text}; background: {th.raised}; font-weight: bold; }}"
         )
-        for key, text in (("today", "Bugün"), ("7d", "7 gün"), ("30d", "30 gün"), ("all", "Tümü")):
+        for key, text in (("today", "Today"), ("7d", "7d"), ("30d", "30d"), ("all", "All")):
             b = QPushButton(text)
             b.setCheckable(True)
             b.setChecked(key == self.range_key)
@@ -345,9 +345,9 @@ class Panel(QWidget):
             head.addWidget(b)
         root.addLayout(head)
 
-        # Geri / konum satırı
+        # Back / breadcrumb row
         crumb = QHBoxLayout()
-        self.back = QPushButton("‹ Geri")
+        self.back = QPushButton("‹ Back")
         self.back.setCursor(Qt.PointingHandCursor)
         self.back.setStyleSheet(
             f"QPushButton {{ color: {th.text2}; background: transparent; border: none; font-size: 12px; padding: 2px 0; }}"
@@ -369,9 +369,9 @@ class Panel(QWidget):
 
         # Alt bilgi
         foot = QHBoxLayout()
-        self.status = label("Loglar okunuyor…", th.muted, 11)
+        self.status = label("Reading logs…", th.muted, 11)
         foot.addWidget(self.status, 1)
-        refresh = QPushButton("Yenile")
+        refresh = QPushButton("Refresh")
         refresh.setCursor(Qt.PointingHandCursor)
         refresh.setStyleSheet(
             f"QPushButton {{ color: {th.text2}; background: transparent; border: none; font-size: 11px; }}"
@@ -405,7 +405,7 @@ class Panel(QWidget):
             self.go_back()
 
     def changeEvent(self, e):
-        # Odak kaybolunca (başka yere tıklanınca) açılır panel gibi kapan.
+        # Close like a popup when focus is lost (clicking elsewhere).
         if e.type() == e.Type.ActivationChange and not self.isActiveWindow() and self.isVisible():
             QTimer.singleShot(150, self._hide_if_inactive)
         super().changeEvent(e)
@@ -430,7 +430,7 @@ class Panel(QWidget):
         self.level = max(0, self.level - 1)
         self.render(reset_scroll=True)
 
-    # Çizim
+    # Rendering
     def render(self, reset_scroll=False):
         pos = self.scroll.verticalScrollBar().value()
         page = QWidget()
@@ -439,7 +439,7 @@ class Panel(QWidget):
         lay.setSpacing(2)
         s = self.summary
         if s is None:
-            lay.addWidget(label("Loglar okunuyor…", self.theme.text2, 13))
+            lay.addWidget(label("Reading logs…", self.theme.text2, 13))
             self.crumb_row.hide()
         else:
             client = self._find_client(s)
@@ -453,10 +453,10 @@ class Panel(QWidget):
                 lay, s, client, thread
             )
             self.status.setText(
-                f"Güncellendi {fmt.clock(s.generated_at)} · {s.file_count} log dosyası"
+                f"Updated {fmt.clock(s.generated_at)} · {s.file_count} log files"
             )
         lay.addStretch(1)
-        # Eski sayfa, tıklama olayı hâlâ işlenirken silinmesin diye sonra silinir.
+        # Delete the old page later so it is not destroyed while its click is still being handled.
         old = self.scroll.takeWidget()
         self.scroll.setWidget(page)
         if old is not None:
@@ -498,7 +498,7 @@ class Panel(QWidget):
         hero.setAlignment(Qt.AlignHCenter)
         hero.setToolTip(usage_tooltip(s.total))
         lay.addWidget(hero)
-        sub = label(f"token · {RANGES[s.range_key].lower()}", th.text2, 13)
+        sub = label(f"tokens · {RANGES[s.range_key].lower()}", th.text2, 13)
         sub.setAlignment(Qt.AlignHCenter)
         lay.addWidget(sub)
         exact = label(fmt.full(v(s.total)), th.muted, 11)
@@ -507,7 +507,7 @@ class Panel(QWidget):
         lay.addWidget(self._metric_button(s), 0, Qt.AlignHCenter)
         lay.addSpacing(16)
 
-        # Claude / Codex payı
+        # Claude / Codex share
         srcs = [(k, s.by_source.get(k, Usage())) for k in SOURCE_LABELS]
         bar = Bar(th, 8)
         bar.set([(v(u), th.series[k]) for k, u in srcs], v(s.total) or 1)
@@ -531,11 +531,11 @@ class Panel(QWidget):
 
         if s.total.total:
             if s.metric == "raw":
-                text = f"Bunun {fmt.percent(s.total.cache_read, s.total.total)}'i önbellekten okunan girdi."
+                text = f"{fmt.percent(s.total.cache_read, s.total.total)} of this is input read from the cache."
             else:
                 text = (
-                    f"Önbellekten tekrar okunan {fmt.short(s.total.cache_read)} token sayılmadı "
-                    f"(ham toplam {fmt.short(s.total.total)})."
+                    f"{fmt.short(s.total.cache_read)} tokens re-read from the cache are not counted "
+                    f"(raw total {fmt.short(s.total.total)})."
                 )
             note = label(text, th.muted, 11)
             note.setContentsMargins(10, 6, 10, 0)
@@ -545,7 +545,7 @@ class Panel(QWidget):
         self._limits(lay, s)
 
         lay.addSpacing(14)
-        btn = QPushButton("Detaylar  ›")
+        btn = QPushButton("Details  ›")
         btn.setCursor(Qt.PointingHandCursor)
         btn.setStyleSheet(
             f"QPushButton {{ color: {th.text}; background: {th.raised}; border: 1px solid {th.border};"
@@ -556,9 +556,9 @@ class Panel(QWidget):
         lay.addWidget(btn)
 
     def _metric_button(self, s: Summary) -> QPushButton:
-        """Hangi token'ların sayıldığını gösterir; tıklayınca ölçü seçilir."""
+        """Shows which tokens are counted; click to pick the metric."""
         th = self.theme
-        btn = QPushButton(f"Ölçü: {METRICS[s.metric].lower()}  ▾")
+        btn = QPushButton(f"Metric: {METRICS[s.metric].lower()}  ▾")
         btn.setCursor(Qt.PointingHandCursor)
         btn.setStyleSheet(
             f"QPushButton {{ color: {th.text2}; background: transparent; border: none; font-size: 11px;"
@@ -569,12 +569,12 @@ class Panel(QWidget):
         menu = self._metric_menu
         menu.clear()
         hints = {
-            "app": "Varsayılan. Claude uygulamasındaki 'Total tokens' ile aynı yöntem: log'a bölünerek "
-            "yazılan aynı yanıtın her satırı ayrı sayılır. Codex'te Codex'in kendi sayacıyla aynıdır "
-            "(sohbet sıkıştırma çağrıları sayılmaz).",
-            "io": "Her model yanıtı bir kez sayılır; Codex CLI'ın toplamıyla aynı tanım.",
-            "new": "Önbelleğe ilk kez yazılan bağlam da sayılır.",
-            "raw": "Her çağrıda önbellekten tekrar okunan bağlam da sayılır; çok büyük çıkar.",
+            "app": "Default. Claude: same method as 'Total tokens' in the Claude app, which counts every "
+            "transcript line of a response split across lines. Codex: same as Codex's own counter "
+            "(conversation compaction calls are not counted).",
+            "io": "Every model call counted once, compaction calls included: actual spend.",
+            "new": "Also counts context written to the cache for the first time.",
+            "raw": "Also counts context re-read from the cache on every call; gets very large.",
         }
         for key, name in METRICS.items():
             act = QAction(name, menu)
@@ -594,8 +594,8 @@ class Panel(QWidget):
             return
         th = self.theme
         plan = f" ({lim.plan})" if lim.plan else ""
-        self._section(lay, f"Codex kullanım limiti{plan}")
-        for name, w in (("5 saatlik", lim.primary), ("Haftalık", lim.secondary)):
+        self._section(lay, f"Codex usage limits{plan}")
+        for name, w in (("5-hour", lim.primary), ("Weekly", lim.secondary)):
             if w is None:
                 continue
             reset_passed = w.resets_at and w.resets_at < time.time()
@@ -606,25 +606,25 @@ class Panel(QWidget):
             box.setSpacing(4)
             top = QHBoxLayout()
             top.addWidget(label(name, th.text, 12), 1)
-            state = "sıfırlandı" if reset_passed else f"sıfırlanma {fmt.clock(w.resets_at)}"
+            state = "reset" if reset_passed else f"resets {fmt.clock(w.resets_at)}"
             top.addWidget(label(state, th.muted, 11))
             top.addSpacing(8)
-            top.addWidget(label(f"%{pct:.0f}", th.text, 12, True))
+            top.addWidget(label(f"{pct:.0f}%", th.text, 12, True))
             box.addLayout(top)
             b = Bar(th, 6)
             b.set([(pct, color)], 100)
             box.addWidget(b)
             lay.addLayout(box)
-        age = label(f"Son ölçüm: {fmt.ago(lim.ts)}", th.muted, 10)
+        age = label(f"Last reading: {fmt.ago(lim.ts)}", th.muted, 10)
         age.setContentsMargins(10, 0, 10, 0)
         lay.addWidget(age)
 
     # Seviye 1
     def _page_clients(self, lay, s: Summary, *_):
         th = self.theme
-        self.crumb.setText("İstemciler")
+        self.crumb.setText("Clients")
         if not s.clients:
-            lay.addWidget(label("Bu aralıkta kullanım yok.", th.text2, 13))
+            lay.addWidget(label("No usage in this range.", th.text2, 13))
             return
         v = self.v
         top = max(v(c.usage) for c in s.clients) or 1
@@ -640,7 +640,7 @@ class Panel(QWidget):
                     Row(
                         th,
                         c.label,
-                        f"{models_text(c.models, s.metric)} · {n} thread",
+                        f"{models_text(c.models, s.metric)} · {n} thread{'s' if n != 1 else ''}",
                         fmt.short(v(c.usage)),
                         [(v(c.usage), color)],
                         top,
@@ -655,7 +655,7 @@ class Panel(QWidget):
         self.crumb.setText(f"{SOURCE_LABELS[c.source]} · {c.label}")
         color = th.series[c.source]
         v = self.v
-        self._section(lay, f"{len(c.threads)} thread", color, fmt.short(v(c.usage)))
+        self._section(lay, f"{len(c.threads)} thread{'s' if len(c.threads) != 1 else ''}", color, fmt.short(v(c.usage)))
         top = (v(c.threads[0].usage) if c.threads else 0) or 1
         for t in c.threads:
             models = models_text(t.model_usage, s.metric)
@@ -682,8 +682,8 @@ class Panel(QWidget):
         title.setContentsMargins(10, 4, 10, 0)
         lay.addWidget(title)
         meta = [
-            f"Proje: {t.project}" + (f"  ·  branch: {t.branch}" if t.branch else ""),
-            f"{fmt.clock(t.first_ts)} – {fmt.clock(t.last_ts)}  ·  {t.calls} model çağrısı",
+            f"Project: {t.project}" + (f"  ·  branch: {t.branch}" if t.branch else ""),
+            f"{fmt.clock(t.first_ts)} – {fmt.clock(t.last_ts)}  ·  {t.calls} model calls",
         ]
         if t.efforts:
             meta.append("Effort: " + ", ".join(sorted(t.efforts)))
@@ -699,45 +699,45 @@ class Panel(QWidget):
         lay.addWidget(hero)
 
         total = v(t.usage) or 1
-        self._section(lay, "Modeller")
+        self._section(lay, "Models")
         for m, u in sorted(t.model_usage.items(), key=lambda x: -v(x[1])):
             lay.addWidget(
                 Row(th, m, fmt.percent(v(u), total), fmt.short(v(u)), [(v(u), color)], total,
                     tooltip=usage_tooltip(u))
             )
 
-        self._section(lay, "Token türleri")
+        self._section(lay, "Token types")
         u = t.usage
-        included = {"io": {"input", "output"}, "new": {"input", "output", "cache_write"}}.get(
+        included = {"app": {"input", "output"}, "io": {"input", "output"}, "new": {"input", "output", "cache_write"}}.get(
             s.metric, {"input", "output", "cache_write", "cache_read"}
         )
         kinds = [
-            ("input", "Yeni girdi", u.input),
-            ("output", "Çıktı", u.output),
-            ("cache_write", "Önbelleğe yazılan girdi", u.cache_write),
-            ("cache_read", "Önbellekten okunan girdi", u.cache_read),
+            ("input", "New input", u.input),
+            ("output", "Output", u.output),
+            ("cache_write", "Cache writes", u.cache_write),
+            ("cache_read", "Cache reads", u.cache_read),
         ]
         for key, name, n in kinds:
             if not n:
                 continue
             notes = []
             if key == "output" and u.reasoning:
-                notes.append(f"bunun {fmt.short(u.reasoning)} kadarı düşünme")
+                notes.append(f"{fmt.short(u.reasoning)} of it thinking")
             if key not in included:
-                notes.append("bu sayıya dahil değil")
+                notes.append("not counted in this total")
             lay.addWidget(
                 Row(th, name, " · ".join(notes), fmt.short(n), [(n, color if key in included else th.muted)],
                     u.total or 1, tooltip=fmt.full(n))
             )
 
-        self._section(lay, "Ne üzerinde (yaklaşık)")
+        self._section(lay, "Spent on (approximate)")
         for name, tu in sorted(t.tools.items(), key=lambda x: -v(x[1]))[:12]:
             lay.addWidget(
                 Row(th, name, fmt.percent(v(tu), total), fmt.short(v(tu)), [(v(tu), color)], total,
                     tooltip=usage_tooltip(tu))
             )
         note = label(
-            "Her model çağrısının token'ı o çağrıda kullanılan araçlara eşit bölünür.",
+            "Each model call's tokens are split evenly across the tools used in that call.",
             th.muted,
             10,
         )
@@ -745,7 +745,7 @@ class Panel(QWidget):
         note.setContentsMargins(10, 4, 10, 0)
         lay.addWidget(note)
 
-    # Konumlandırma
+    # Positioning
     def place(self, tray_geo: QRect | None):
         screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         area = screen.availableGeometry()
@@ -814,13 +814,13 @@ class App(QObject):
 
         if self.tray_ok:
             self.tray = QSystemTrayIcon(make_icon(), self)
-            self.tray.setToolTip("Token Paneli — yükleniyor")
+            self.tray.setToolTip("Token Panel — loading")
             menu = QMenu()
-            act_open = QAction("Paneli aç", menu)
+            act_open = QAction("Open panel", menu)
             act_open.triggered.connect(self.show_panel)
-            act_refresh = QAction("Yenile", menu)
+            act_refresh = QAction("Refresh", menu)
             act_refresh.triggered.connect(self.request_refresh.emit)
-            act_quit = QAction("Çıkış", menu)
+            act_quit = QAction("Quit", menu)
             act_quit.triggered.connect(self.quit)
             menu.addActions([act_open, act_refresh])
             menu.addSeparator()
@@ -830,7 +830,7 @@ class App(QObject):
             self.tray.activated.connect(self.on_tray)
             self.tray.show()
         else:
-            # Tray yoksa (ör. eklentisiz GNOME) normal pencere olarak çalış.
+            # Without a tray (e.g. GNOME without the extension) run as a normal window.
             self.panel.setWindowFlags(Qt.Window)
             self.panel.setAttribute(Qt.WA_TranslucentBackground, False)
             self.panel.changeEvent = lambda e: QWidget.changeEvent(self.panel, e)
@@ -844,7 +844,7 @@ class App(QObject):
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.MiddleClick):
             if self.panel.isVisible():
                 self.panel.hide()
-            elif time.monotonic() - self.panel.hidden_at > 0.3:  # odak kaybıyla az önce kapandıysa yeniden açma
+            elif time.monotonic() - self.panel.hidden_at > 0.3:  # just closed by losing focus; don't reopen
                 self.show_panel()
 
     def show_panel(self):
@@ -864,7 +864,7 @@ class App(QObject):
         if self.tray_ok:
             m = today.metric
             parts = " · ".join(f"{SOURCE_LABELS[k]} {fmt.short(u.value(m))}" for k, u in today.by_source.items())
-            self.tray.setToolTip(f"Bugün: {fmt.short(today.total.value(m))} token\n{parts}")
+            self.tray.setToolTip(f"Today: {fmt.short(today.total.value(m))} tokens\n{parts}")
 
     def shutdown(self):
         if self.thread.isRunning():
@@ -880,7 +880,7 @@ class App(QObject):
 def run(make_store, show: bool = False) -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("tokenpanel")
-    app.setApplicationDisplayName("Token Paneli")
+    app.setApplicationDisplayName("Token Panel")
     app.setQuitOnLastWindowClosed(False)
     app.setWindowIcon(make_icon())
     font = QFont(app.font())

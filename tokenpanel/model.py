@@ -1,4 +1,4 @@
-"""Ortak veri tipleri ve etiketler."""
+"""Shared data types and labels."""
 
 from __future__ import annotations
 
@@ -9,17 +9,17 @@ SOURCE_LABELS = {
     "codex": "Codex",
 }
 
-# Claude Code: her satırdaki "entrypoint" alanı.
+# Claude Code: the "entrypoint" field on every line.
 CLAUDE_CLIENTS = {
     "cli": "CLI",
     "claude-desktop": "Desktop",
     "claude-vscode": "VS Code",
     "sdk-ts": "ACP (Zed) / SDK",
     "sdk-py": "SDK (Python)",
-    "remote_desktop": "Uzak oturum",
+    "remote_desktop": "Remote session",
 }
 
-# Codex: session_meta içindeki "originator" alanı.
+# Codex: the "originator" field in session_meta.
 CODEX_CLIENTS = {
     "codex-tui": "CLI",
     "codex_cli_rs": "CLI",
@@ -30,27 +30,27 @@ CODEX_CLIENTS = {
 }
 
 
-# Panelde gösterilen "token" sayısının tanımı.
+# What the panel counts as "tokens".
 METRICS = {
-    "app": "Claude uygulamasıyla aynı",
-    "io": "Girdi + çıktı",
-    "new": "Girdi + çıktı + önbelleğe yazma",
-    "raw": "Ham (önbellekten okunan dahil)",
+    "app": "Same as the official apps",
+    "io": "Input + output",
+    "new": "Input + output + cache writes",
+    "raw": "Raw (including cache reads)",
 }
 DEFAULT_METRIC = "app"
 
 
 def client_label(source: str, client: str) -> str:
     table = CLAUDE_CLIENTS if source == "claude" else CODEX_CLIENTS
-    return table.get(client, client or "Bilinmiyor")
+    return table.get(client, client or "Unknown")
 
 
 @dataclass
 class Usage:
-    """Tek bir API çağrısının (veya toplamın) token dökümü.
+    """Token breakdown of one API call (or of a sum of calls).
 
     total = input + cache_read + cache_write + output.
-    reasoning, output'un içinde yer alan düşünme token'larıdır (toplama ayrıca eklenmez).
+    reasoning is the thinking part of output (not added to the total again).
     """
 
     input: int = 0
@@ -58,9 +58,9 @@ class Usage:
     cache_write: int = 0
     output: int = 0
     reasoning: int = 0
-    # Uygulamaların kendi gösterdiği girdi + çıktı.
-    # Claude: istatistik ekranı aynı yanıtın log'a bölünerek yazılan her satırını ayrı sayar.
-    # Codex: kendi sayacı (token_count) sohbet sıkıştırma çağrılarını saymaz.
+    # Input + output as the official apps report it.
+    # Claude: the stats screen counts every transcript line of a response that was split across lines.
+    # Codex: its own counter (token_count) leaves out conversation compaction calls.
     app_io: float = 0
 
     @property
@@ -68,12 +68,12 @@ class Usage:
         return self.input + self.cache_read + self.cache_write + self.output
 
     def value(self, metric: str) -> float:
-        """Seçilen ölçüye göre değer.
+        """Value under the given metric.
 
-        io : önbellek hariç girdi + çıktı, her model çağrısı bir kez (gerçek harcama)
-        new: io + önbelleğe yazılan girdi
-        raw: her şey; önbellekten tekrar tekrar okunan bağlam da dahil
-        app: Claude uygulamasının gösterdiği "Total tokens" ile aynı yöntem
+        app: what Claude Code's stats ("Total tokens") and Codex's own counter show
+        io : non-cached input + output, every model call once (actual spend)
+        new: io + input written to the cache
+        raw: everything, including context re-read from the cache on every call
         """
         if metric == "app":
             return self.app_io
@@ -107,7 +107,7 @@ class Usage:
 
 @dataclass
 class Event:
-    """Bir model çağrısı."""
+    """One model call."""
 
     source: str
     client: str

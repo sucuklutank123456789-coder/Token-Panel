@@ -1,4 +1,4 @@
-"""Log dosyalarını bulur, artımlı okur ve panel için özet üretir."""
+"""Finds log files, reads them incrementally and builds the panel summary."""
 
 from __future__ import annotations
 
@@ -13,13 +13,13 @@ from .model import DEFAULT_METRIC, SOURCE_LABELS, CodexLimits, Event, ThreadInfo
 from .parsers import ClaudeFile, CodexFile, JsonlFile
 
 RANGES = {
-    "today": "Bugün",
-    "7d": "Son 7 gün",
-    "30d": "Son 30 gün",
-    "all": "Tümü",
+    "today": "Today",
+    "7d": "Last 7 days",
+    "30d": "Last 30 days",
+    "all": "All time",
 }
 
-NO_TOOL = "Yanıt (araçsız)"
+NO_TOOL = "Reply (no tools)"
 
 
 def default_claude_dirs() -> list[str]:
@@ -57,7 +57,7 @@ def project_name(cwd: str) -> str:
         return "—"
     cwd = cwd.rstrip("/")
     if cwd == os.path.expanduser("~") or cwd.count("/") <= 2 and cwd.startswith("/home/"):
-        return "~ (ana dizin)"
+        return "~ (home)"
     return os.path.basename(cwd) or cwd
 
 
@@ -112,7 +112,7 @@ class Store:
         self._index_mtime = -1.0
         self._index_names: dict[str, str] = {}
 
-    # --- Sink arayüzü -----------------------------------------------------
+    # --- Sink interface -----------------------------------------------------
     def add_event(self, key: str, event: Event) -> Event | None:
         existing = self.events.get(key)
         if existing is not None:
@@ -131,7 +131,7 @@ class Store:
         if self.limits is None or limits.ts >= self.limits.ts:
             self.limits = limits
 
-    # --- Tarama -----------------------------------------------------------
+    # --- Scanning -----------------------------------------------------------
     def _discover(self) -> list[tuple[str, type]]:
         found = []
         for base in self.claude_dirs:
@@ -143,9 +143,9 @@ class Store:
         return found
 
     def refresh(self) -> bool:
-        """Yeni/değişen dosyaları okur. Değişiklik olduysa True döner."""
+        """Reads new/changed files. Returns True if anything changed."""
         changed = False
-        # Önce eski dosyalar: aynı API çağrısı birden çok dosyada varsa ilk sahibine yazılsın.
+        # Oldest files first: an API call present in several files belongs to the first one.
         for path, cls in sorted(self._discover(), key=lambda x: _mtime(x[0])):
             f = self.files.get(path)
             if f is None:
@@ -182,7 +182,7 @@ class Store:
             self.thread("codex", tid).title = name
         return True
 
-    # --- Özet -------------------------------------------------------------
+    # --- Summary -------------------------------------------------------------
     def summarize(self, range_key: str, metric: str = DEFAULT_METRIC, now: float | None = None) -> Summary:
         start = range_start(range_key, now)
         total = Usage()

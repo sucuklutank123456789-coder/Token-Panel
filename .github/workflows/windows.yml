@@ -1,0 +1,101 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s tests -t . -v
+
+  windows-exe:
+    needs: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: python -m pip install "PySide6>=6.4" pyinstaller
+      - name: Build TokenPanel.exe
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python packaging/windows/make_ico.py packaging/windows/tokenpanel.ico
+          pyinstaller --noconfirm packaging/windows/tokenpanel.spec
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+          $logs = Join-Path $env:RUNNER_TEMP "logs"
+          python scripts/sample_logs.py $logs
+          $dirs = @("--claude-dir", "$logs\claude", "--codex-dir", "$logs\codex")
+          $exe = Resolve-Path dist\TokenPanel.exe
+
+          # --dump: reads the sample logs (Windows-style paths) and prints the summary.
+          $p = Start-Process $exe -ArgumentList (@("--dump", "--range", "today") + $dirs) -Wait -PassThru `
+            -RedirectStandardOutput dump.txt -RedirectStandardError dump-err.txt
+          Get-Content dump.txt, dump-err.txt
+          if ($p.ExitCode -ne 0) { throw "--dump exited with $($p.ExitCode)" }
+          foreach ($want in "Claude Code · CLI", "Codex · Desktop", "token-panel") {
+            if (-not (Select-String -Path dump.txt -SimpleMatch $want -Quiet)) { throw "--dump output lacks '$want'" }
+          }
+
+          # The command the README gives: piping makes PowerShell wait for the GUI program and capture its output.
+          $piped = & $exe --dump --range today @dirs | Out-String
+          if ($piped -notmatch "Codex") { throw "piped --dump printed nothing: '$piped'" }
+          # Same on a Turkish console (code page 857): letters must survive, symbols it lacks become ASCII.
+          [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(857)
+          $piped = & $exe --dump --range today @dirs | Out-String
+          [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+          $piped
+          if (-not $piped.Contains("Yanıtla çiz")) { throw "Turkish letters were garbled on code page 857" }
+          if (-not $piped.Contains("[Codex · Desktop]")) { throw "middle dot was garbled on code page 857" }
+
+          # --self-test: opens the panel and renders every level, with the real Windows platform plugin
+          # and with the offscreen one.
+          foreach ($platform in "", "offscreen") {
+            $env:QT_QPA_PLATFORM = $platform
+            $p = Start-Process $exe -ArgumentList (@("--self-test") + $dirs) -Wait -PassThru `
+              -RedirectStandardOutput test.txt -RedirectStandardError test-err.txt
+            Get-Content test.txt, test-err.txt
+            if ($p.ExitCode -ne 0) { throw "--self-test ($platform) exited with $($p.ExitCode)" }
+          }
+          "{0:N1} MB" -f ((Get-Item $exe).Length / 1MB)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TokenPanel-windows
+          path: dist/TokenPanel.exe
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: windows-exe
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: TokenPanel-windows
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: TokenPanel.exe
+          generate_release_notes: true

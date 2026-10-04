@@ -1,6 +1,6 @@
 # Token Panel
 
-A small Linux system tray app that shows how many tokens Claude Code and Codex use.
+A small system tray app for Linux and Windows that shows how many tokens Claude Code and Codex use.
 It never talks to an API; it reads the session logs both tools write to your computer.
 
 ## What it shows
@@ -34,7 +34,24 @@ The choice is remembered.
 
 ## Install
 
-### Any distribution (recommended)
+### Windows
+
+Download `TokenPanel.exe` from the [Releases](https://github.com/sucuklutank123456789-coder/Token/releases) page
+(or, for the latest build, from the newest successful run under **Actions → Build → Artifacts**) and run it.
+It is a single file; nothing is installed and Python is not needed.
+
+- Opening it shows the panel next to the tray. Windows hides new tray icons behind the **^** arrow; drag the
+  icon onto the taskbar to keep it visible.
+- Right click the icon → **Start with Windows** to start it on login.
+- Using Claude Code or Codex inside WSL? Right click → **Include WSL logs** (shown when WSL is installed).
+  Reading those logs starts the WSL distribution, so it is off by default.
+- Running it again while it is open just opens the panel.
+- The .exe is not code-signed, so SmartScreen may warn on first launch: **More info → Run anyway**.
+
+Logs are read from `%USERPROFILE%\.claude` and `%USERPROFILE%\.codex`, the folders Claude Code and Codex use on
+Windows. Terminal output works too (in PowerShell): `.\TokenPanel.exe --dump | Out-Host`.
+
+### Linux, any distribution (recommended)
 
 ```bash
 git clone https://github.com/sucuklutank123456789-coder/Token.git
@@ -82,7 +99,7 @@ cp /usr/share/applications/tokenpanel.desktop ~/.config/autostart/
 python -m tokenpanel          # needs Python 3.10+ and PySide6 6.4+
 ```
 
-### Desktop environment notes
+### Desktop environment notes (Linux)
 
 - **KDE, XFCE, Cinnamon, MATE, LXQt, Budgie**: the tray works out of the box.
 - **Hyprland / Sway**: enable the `tray` module in waybar.
@@ -105,8 +122,8 @@ tokenpanel --dump --range 7d --metric app   # app | io | new | raw
 
 | Tool | Log location | Client field |
 |---|---|---|
-| Claude Code | `~/.claude/projects/**/*.jsonl` (honours `CLAUDE_CONFIG_DIR`) | `entrypoint`: `cli`, `claude-desktop`, `claude-vscode`, `sdk-ts` (Zed ACP) |
-| Codex | `~/.codex/sessions/**/*.jsonl`, `~/.codex/archived_sessions/` (honours `CODEX_HOME`) | `originator`: `codex-tui`, `Codex Desktop`, `codex_vscode`, `zed` |
+| Claude Code | `~/.claude/projects/**/*.jsonl`, on Windows `%USERPROFILE%\.claude` (honours `CLAUDE_CONFIG_DIR`) | `entrypoint`: `cli`, `claude-desktop`, `claude-vscode`, `sdk-ts` (Zed ACP) |
+| Codex | `~/.codex/sessions/**/*.jsonl`, `~/.codex/archived_sessions/`, on Windows `%USERPROFILE%\.codex` (honours `CODEX_HOME`) | `originator`: `codex-tui`, `Codex Desktop`, `codex_vscode`, `zed` |
 
 Known limitations:
 
@@ -124,3 +141,14 @@ with the Claude app.
 ```bash
 python -m unittest discover -s tests -t .
 ```
+
+Windows build (on Windows, with PySide6 and PyInstaller installed):
+
+```bash
+python packaging/windows/make_ico.py packaging/windows/tokenpanel.ico
+pyinstaller --noconfirm packaging/windows/tokenpanel.spec     # writes dist/TokenPanel.exe
+```
+
+The **Build** workflow runs the tests on Linux and Windows, builds `TokenPanel.exe` on every push and checks it
+against sample logs with Windows paths (`scripts/sample_logs.py`). Pushing a `v*` tag attaches the .exe to a
+GitHub release.

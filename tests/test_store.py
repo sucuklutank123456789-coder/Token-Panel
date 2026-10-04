@@ -3,7 +3,11 @@ import os
 import tempfile
 import unittest
 
-from tokenpanel.store import Store
+from unittest import mock
+
+from tokenpanel import paths
+from tokenpanel.__main__ import console_encoding
+from tokenpanel.store import Store, project_name
 
 
 def write_jsonl(path, rows, partial=None):
@@ -221,6 +225,60 @@ class StoreTest(unittest.TestCase):
         self.store.refresh()
         self.assertEqual(self.store.summarize("today").total.total, 0)
         self.assertEqual(self.store.summarize("all").total.total, 5)
+
+    def test_several_codex_dirs(self):
+        # e.g. Windows plus a WSL distribution; the same thread in both is counted once.
+        other = os.path.join(self.tmp.name, "codex-wsl")
+        rows = [codex_meta("t1", "codex-tui"), codex_turn("u1", "gpt-5.5", "high"), codex_record("r1", "u1", 100, 0, 10)]
+        write_jsonl(os.path.join(self.codex, "sessions", "2026", "10", "04", "rollout-a.jsonl"), rows)
+        write_jsonl(os.path.join(other, "sessions", "2026", "10", "04", "rollout-a.jsonl"), rows)
+        write_jsonl(os.path.join(other, "sessions", "2026", "10", "04", "rollout-b.jsonl"),
+                    [codex_meta("t2", "codex-tui"), codex_turn("u1", "gpt-5.5", "high"),
+                     codex_record("r2", "u1", 50, 0, 5)])
+        write_jsonl(os.path.join(other, "session_index.jsonl"), [{"id": "t2", "thread_name": "From WSL"}])
+        store = Store([self.claude], [self.codex, other])
+        store.refresh()
+        s = store.summarize("all")
+        self.assertEqual(s.total.total, 110 + 55)
+        titles = {t.title for c in s.clients for t in c.threads}
+        self.assertIn("From WSL", titles)
+
+
+class PathsTest(unittest.TestCase):
+    def test_project_name_windows_and_linux(self):
+        self.assertEqual(project_name(r"C:\Users\ali\Projects\Token"), "Token")
+        self.assertEqual(project_name("C:\\Users\\ali\\Projects\\Token\\"), "Token")
+        self.assertEqual(project_name(r"C:\Users\ali"), "~ (home)")
+        self.assertEqual(project_name(r"D:\work"), "work")
+        self.assertEqual(project_name("/home/ali/Token"), "Token")
+        self.assertEqual(project_name("/home/ali"), "~ (home)")
+        self.assertEqual(project_name("/"), "/")
+        self.assertEqual(project_name(""), "—")
+
+    def test_default_dirs(self):
+        with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home}):
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+            os.environ.pop("CODEX_HOME", None)
+            home = os.path.realpath(home)
+            self.assertEqual(paths.default_claude_dirs(),
+                             [os.path.join(home, ".claude"), os.path.join(home, ".config", "claude")])
+            self.assertEqual(paths.default_codex_dirs(), [os.path.join(home, ".codex")])
+            with mock.patch.object(paths, "wsl_homes", return_value=[os.path.join(home, "wsl", "ali")]):
+                self.assertIn(os.path.join(home, "wsl", "ali", ".codex"), paths.default_codex_dirs(include_wsl=True))
+                self.assertIn(os.path.join(home, "wsl", "ali", ".claude"), paths.default_claude_dirs(include_wsl=True))
+
+
+class ConsoleEncodingTest(unittest.TestCase):
+    def test_code_pages(self):
+        self.assertEqual(console_encoding(857), "cp857")
+        self.assertEqual(console_encoding(65001), "utf-8")
+        self.assertEqual(console_encoding(0), "utf-8")
+        self.assertEqual(console_encoding(99999), "utf-8")
+
+    def test_turkish_console_keeps_letters_and_replaces_symbols(self):
+        line = "Yanıtla merhaba — ~ (home) · Claude Code 1.2K…"
+        out = line.encode("cp857", errors="tokenpanel").decode("cp857")
+        self.assertEqual(out, "Yanıtla merhaba - ~ (home) · Claude Code 1.2K...")
 
 
 if __name__ == "__main__":

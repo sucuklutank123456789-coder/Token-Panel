@@ -5,3 +5,6 @@ dist/
 packaging/arch/pkg/
 packaging/arch/src/
 packaging/arch/*.pkg.tar.*
+
+# Windows build
+packaging/windows/tokenpanel.ico

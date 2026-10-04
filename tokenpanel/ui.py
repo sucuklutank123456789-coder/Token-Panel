@@ -9,12 +9,14 @@ Levels:
 
 from __future__ import annotations
 
+import getpass
 import sys
 import time
 from dataclasses import dataclass
 
 from PySide6.QtCore import QMetaObject, QObject, QPoint, QRect, QSettings, QSize, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QColor, QCursor, QFont, QGuiApplication, QIcon, QPainter, QPainterPath, QPixmap
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -31,8 +33,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import fmt
+from . import autostart, fmt
 from .model import DEFAULT_METRIC, METRICS, SOURCE_LABELS, Usage
+from .paths import wsl_distros
 from .store import RANGES, ClientRow, Store, Summary, ThreadRow
 
 REFRESH_MS = 5000
@@ -103,17 +106,18 @@ def current_theme() -> Theme:
 class Worker(QObject):
     updated = Signal(object, object)  # (summary for the selected range, summary for today)
 
-    def __init__(self, make_store, metric: str):
+    def __init__(self, make_store, metric: str, include_wsl: bool = False):
         super().__init__()
         self._make_store = make_store
         self.store: Store | None = None
         self.range_key = "today"
         self.metric_key = metric
+        self.include_wsl = include_wsl
         self.timer: QTimer | None = None
 
     @Slot()
     def start(self):
-        self.store = self._make_store()
+        self.store = self._make_store(self.include_wsl)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
         self.timer.start(REFRESH_MS)
@@ -143,6 +147,14 @@ class Worker(QObject):
         self.metric_key = metric
         if self.store is not None:
             self._emit()
+
+    @Slot(bool)
+    def set_wsl(self, on: bool):
+        # The log directories change, so start over with a fresh store.
+        self.include_wsl = on
+        if self.store is not None:
+            self.store = self._make_store(on)
+            self.tick(force=True)
 
     @Slot()
     def refresh_now(self):
@@ -792,6 +804,7 @@ class App(QObject):
     request_range = Signal(str)
     request_refresh = Signal()
     request_metric = Signal(str)
+    request_wsl = Signal(bool)
 
     def __init__(self, make_store, show: bool):
         super().__init__()
@@ -799,17 +812,20 @@ class App(QObject):
         metric = self.settings.value("metric", DEFAULT_METRIC)
         if metric not in METRICS:
             metric = DEFAULT_METRIC
+        has_wsl = bool(wsl_distros())
+        include_wsl = has_wsl and self.settings.value("wsl", False, type=bool)
         self.panel = Panel(metric)
         self.tray_ok = QSystemTrayIcon.isSystemTrayAvailable()
 
         self.thread = QThread()
-        self.worker = Worker(make_store, metric)
+        self.worker = Worker(make_store, metric, include_wsl)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.start)
         self.worker.updated.connect(self.on_update)
         self.request_range.connect(self.worker.set_range)
         self.request_refresh.connect(self.worker.refresh_now)
         self.request_metric.connect(self.worker.set_metric)
+        self.request_wsl.connect(self.worker.set_wsl)
         self.panel.range_changed.connect(self.request_range.emit)
         self.panel.metric_changed.connect(self.on_metric)
         self.panel.refresh_requested.connect(self.request_refresh.emit)
@@ -827,6 +843,21 @@ class App(QObject):
             act_quit.triggered.connect(self.quit)
             menu.addActions([act_open, act_refresh])
             menu.addSeparator()
+            if autostart.supported():
+                autostart.sync()
+                act_auto = QAction("Start with Windows", menu)
+                act_auto.setCheckable(True)
+                act_auto.setChecked(autostart.enabled())
+                act_auto.toggled.connect(autostart.set_enabled)
+                menu.addAction(act_auto)
+            if has_wsl:
+                act_wsl = QAction("Include WSL logs", menu)
+                act_wsl.setCheckable(True)
+                act_wsl.setChecked(include_wsl)
+                act_wsl.toggled.connect(self.on_wsl)
+                menu.addAction(act_wsl)
+            if not menu.actions()[-1].isSeparator():
+                menu.addSeparator()
             menu.addAction(act_quit)
             self.menu = menu
             self.tray.setContextMenu(menu)
@@ -861,6 +892,10 @@ class App(QObject):
         self.settings.setValue("metric", metric)
         self.request_metric.emit(metric)
 
+    def on_wsl(self, on: bool):
+        self.settings.setValue("wsl", on)
+        self.request_wsl.emit(on)
+
     @Slot(object, object)
     def on_update(self, current: Summary, today: Summary):
         self.panel.set_summary(current)
@@ -880,7 +915,63 @@ class App(QObject):
         QApplication.quit()
 
 
-def run(make_store, show: bool = False) -> int:
+def _instance_name() -> str:
+    try:
+        user = getpass.getuser()
+    except Exception:  # no user name in the environment
+        user = "user"
+    return f"tokenpanel-{user}"
+
+
+def _show_running_instance(name: str) -> bool:
+    """If Token Panel is already running, asks it to open its panel and returns True."""
+    sock = QLocalSocket()
+    sock.connectToServer(name)
+    if not sock.waitForConnected(500):
+        return False
+    sock.write(b"show")
+    sock.waitForBytesWritten(500)
+    sock.disconnectFromServer()
+    return True
+
+
+class SelfTest(QObject):
+    """--self-test: renders every panel level once the first data arrives, then exits (used by CI)."""
+
+    def __init__(self, app: QApplication, main: App):
+        super().__init__()
+        self.app, self.main = app, main
+        main.worker.updated.connect(self.check)
+        QTimer.singleShot(60000, lambda: self.finish(3, "timed out"))
+
+    @Slot(object, object)
+    def check(self, current: Summary, today: Summary):
+        try:
+            p = self.main.panel
+            p.grab()
+            p.open(1)
+            p.grab()
+            levels = 2
+            if current.clients:
+                c = current.clients[0]
+                p.open(2, client=(c.source, c.client))
+                p.grab()
+                levels += 1
+                if c.threads:
+                    p.open(3, thread=c.threads[0].thread_id)
+                    p.grab()
+                    levels += 1
+            self.finish(0, f"self-test ok: {levels} levels, {current.file_count} files, platform {self.app.platformName()}")
+        except Exception as e:  # report instead of letting Qt swallow it
+            self.finish(2, f"self-test failed: {e!r}")
+
+    def finish(self, code: int, message: str):
+        print(message, flush=True)
+        self.main.shutdown()
+        self.app.exit(code)
+
+
+def run(make_store, show: bool = False, self_test: bool = False) -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("tokenpanel")
     app.setApplicationDisplayName("Token Panel")
@@ -888,7 +979,28 @@ def run(make_store, show: bool = False) -> int:
     app.setWindowIcon(make_icon())
     font = QFont(app.font())
     app.setFont(font)
-    main = App(make_store, show)
+
+    server = None
+    if not self_test:
+        name = _instance_name()
+        if _show_running_instance(name):
+            return 0
+        QLocalServer.removeServer(name)  # left behind if a previous run crashed
+        server = QLocalServer(app)
+        server.listen(name)
+
+    main = App(make_store, show or self_test)
+    if server is not None:
+
+        def on_connection():
+            conn = server.nextPendingConnection()
+            if conn is not None:
+                conn.disconnected.connect(conn.deleteLater)
+            main.show_panel()
+
+        server.newConnection.connect(on_connection)
+    tester = SelfTest(app, main) if self_test else None
     code = app.exec()
     main.shutdown()
+    del tester
     return code

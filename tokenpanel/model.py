@@ -30,6 +30,15 @@ CODEX_CLIENTS = {
 }
 
 
+# Panelde gösterilen "token" sayısının tanımı.
+METRICS = {
+    "io": "Girdi + çıktı",
+    "new": "Girdi + çıktı + önbelleğe yazma",
+    "raw": "Ham (önbellekten okunan dahil)",
+}
+DEFAULT_METRIC = "io"
+
+
 def client_label(source: str, client: str) -> str:
     table = CLAUDE_CLIENTS if source == "claude" else CODEX_CLIENTS
     return table.get(client, client or "Bilinmiyor")
@@ -52,6 +61,22 @@ class Usage:
     @property
     def total(self) -> int:
         return self.input + self.cache_read + self.cache_write + self.output
+
+    def value(self, metric: str) -> float:
+        """Seçilen ölçüye göre değer.
+
+        io : önbellek hariç girdi + çıktı (Codex CLI'ın gösterdiği toplamla aynı tanım)
+        new: io + önbelleğe yazılan girdi
+        raw: her şey; önbellekten tekrar tekrar okunan bağlam da dahil
+        """
+        if metric == "raw":
+            return self.total
+        if metric == "new":
+            return self.input + self.cache_write + self.output
+        return self.input + self.output
+
+    def scaled(self, f: float) -> "Usage":
+        return Usage(self.input * f, self.cache_read * f, self.cache_write * f, self.output * f, self.reasoning * f)
 
     def add(self, other: "Usage") -> None:
         self.input += other.input

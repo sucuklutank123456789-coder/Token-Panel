@@ -17,6 +17,20 @@ Panel katman katman açılır:
 
 Tray simgesinin üzerine gelince bugünün toplamı görünür. Satırların üzerine gelince tam sayılar çıkar.
 
+### Hangi token'lar sayılıyor?
+
+Ajanlar her model çağrısında konuşmanın tamamını yeniden gönderir; bunun büyük kısmı önbellekten okunur.
+Önbellekten okunanları da saymak toplamı 30–150 kat şişirir. Bu yüzden panelin varsayılan ölçüsü
+**girdi + çıktı**dır (Codex CLI'ın gösterdiği toplamla aynı tanım). Özet ekranındaki **Ölçü** düğmesinden değiştirilebilir:
+
+| Ölçü | Sayılanlar |
+|---|---|
+| Girdi + çıktı (varsayılan) | önbellek dışı girdi + çıktı (düşünme dahil) |
+| Girdi + çıktı + önbelleğe yazma | yukarıdakiler + önbelleğe ilk kez yazılan bağlam |
+| Ham | her şey; önbellekten tekrar tekrar okunan bağlam da dahil |
+
+Seçim hatırlanır. Satırların üzerine gelince tüm türlerin dökümü görünür.
+
 ## Kurulum (Arch tabanlı dağıtımlar)
 
 ```bash
@@ -56,7 +70,7 @@ python -m tokenpanel          # depo kökünden
 Terminal çıktısı (panel açmadan):
 
 ```bash
-tokenpanel --dump --range 7d
+tokenpanel --dump --range 7d --metric io   # io | new | raw
 ```
 
 ## Veri kaynakları
@@ -71,7 +85,6 @@ Bilinen sınırlar:
 - Claude tarafında `sdk-ts`, Agent SDK kullanan her aracı kapsar; yalnızca Zed kullanıyorsanız ACP'ye denk gelir.
 - Codex Desktop her sohbeti otomatik bir klasörde açtığı için oradaki "proje" adı o klasörün adıdır.
 - "Ne üzerinde" dökümü yaklaşıktır: bir model çağrısının token'ı o çağrıda kullanılan araçlara eşit bölünür.
-- Toplamın büyük kısmı genelde önbellekten okunan girdidir; bu ayrıca gösterilir.
 
 ## Geliştirme
 

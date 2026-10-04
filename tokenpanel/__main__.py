@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from .model import DEFAULT_METRIC, METRICS
 from .store import RANGES, Store
 
 
@@ -10,6 +11,12 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="tokenpanel", description="Claude Code ve Codex token kullanım paneli")
     ap.add_argument("--dump", action="store_true", help="Panel açmadan özeti terminale yaz")
     ap.add_argument("--range", choices=list(RANGES), default="all", help="--dump için zaman aralığı")
+    ap.add_argument(
+        "--metric",
+        choices=list(METRICS),
+        default=DEFAULT_METRIC,
+        help="--dump için ölçü: io=girdi+çıktı, new=+önbelleğe yazma, raw=önbellek okuma dahil",
+    )
     ap.add_argument("--show", action="store_true", help="Açılışta paneli de göster")
     ap.add_argument("--claude-dir", action="append", help="Claude yapılandırma dizini (varsayılan ~/.claude)")
     ap.add_argument("--codex-dir", help="Codex dizini (varsayılan ~/.codex)")
@@ -23,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
 
         store = make_store()
         store.refresh()
-        print(render(store.summarize(args.range)))
+        print(render(store.summarize(args.range, args.metric)))
         return 0
 
     from .ui import run

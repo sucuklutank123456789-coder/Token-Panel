@@ -106,8 +106,11 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(t.title, "Başlık")
         self.assertEqual(t.branch, "main")
         self.assertEqual(set(t.model_usage), {"claude-opus-5-5", "claude-sonnet-5-5"})
-        self.assertAlmostEqual(t.tools["Bash"], 57.5)
-        self.assertAlmostEqual(t.tools["Read"], 57.5)
+        self.assertAlmostEqual(t.tools["Bash"].total, 57.5)
+        self.assertAlmostEqual(t.tools["Read"].total, 57.5)
+        # Varsayılan ölçü önbellekten okunanı saymaz: 10+5 + 20 + 7.
+        self.assertEqual(s.total.value("io"), 42)
+        self.assertEqual(s.total.value("raw"), 142)
         self.assertEqual(c[("claude", "sdk-ts")].usage.total, 7)
 
     def test_codex_records_models_tools_and_limits(self):
@@ -148,7 +151,8 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(t.model_usage["gpt-5.5"].input, 200)
         self.assertEqual(t.model_usage["gpt-6"].total, 220)
         self.assertEqual(t.efforts, {"high", "low"})
-        self.assertAlmostEqual(t.tools["exec_command"], 525)
+        self.assertAlmostEqual(t.tools["exec_command"].total, 525)
+        self.assertEqual(t.usage.value("io"), 200 + 50 + 200 + 20)
         self.assertEqual(s.limits.plan, "plus")
         self.assertEqual(s.limits.primary.used_percent, 12.0)
 

@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .model import SOURCE_LABELS, CodexLimits, Event, ThreadInfo, Usage, client_label
+from .model import DEFAULT_METRIC, SOURCE_LABELS, CodexLimits, Event, ThreadInfo, Usage, client_label
 from .parsers import ClaudeFile, CodexFile, JsonlFile
 
 RANGES = {
@@ -73,7 +73,7 @@ class ThreadRow:
     usage: Usage = field(default_factory=Usage)
     model_usage: dict[str, Usage] = field(default_factory=dict)
     efforts: set[str] = field(default_factory=set)
-    tools: dict[str, float] = field(default_factory=dict)
+    tools: dict[str, Usage] = field(default_factory=dict)
     calls: int = 0
     first_ts: float = 0.0
     last_ts: float = 0.0
@@ -85,13 +85,14 @@ class ClientRow:
     client: str
     label: str
     usage: Usage = field(default_factory=Usage)
-    models: dict[str, int] = field(default_factory=dict)
+    models: dict[str, Usage] = field(default_factory=dict)
     threads: list[ThreadRow] = field(default_factory=list)
 
 
 @dataclass
 class Summary:
     range_key: str
+    metric: str
     total: Usage
     by_source: dict[str, Usage]
     clients: list[ClientRow]
@@ -182,7 +183,7 @@ class Store:
         return True
 
     # --- Özet -------------------------------------------------------------
-    def summarize(self, range_key: str, now: float | None = None) -> Summary:
+    def summarize(self, range_key: str, metric: str = DEFAULT_METRIC, now: float | None = None) -> Summary:
         start = range_start(range_key, now)
         total = Usage()
         by_source: dict[str, Usage] = {s: Usage() for s in SOURCE_LABELS}
@@ -202,7 +203,7 @@ class Store:
                 c = clients[ck] = ClientRow(ev.source, ev.client, client_label(ev.source, ev.client))
             c.usage.add(u)
             model = ev.model or "bilinmiyor"
-            c.models[model] = c.models.get(model, 0) + u.total
+            c.models.setdefault(model, Usage()).add(u)
 
             tk = (ev.source, ev.client, ev.thread_id)
             t = threads.get(tk)
@@ -228,15 +229,16 @@ class Store:
             t.first_ts = min(t.first_ts, ev.ts)
             t.last_ts = max(t.last_ts, ev.ts)
             names = ev.tools or [NO_TOOL]
-            share = u.total / len(names)
+            share = u.scaled(1 / len(names))
             for n in names:
-                t.tools[n] = t.tools.get(n, 0.0) + share
+                t.tools.setdefault(n, Usage()).add(share)
 
-        rows = sorted(clients.values(), key=lambda c: (c.source, -c.usage.total))
+        rows = sorted(clients.values(), key=lambda c: (c.source, -c.usage.value(metric)))
         for c in rows:
-            c.threads.sort(key=lambda t: -t.usage.total)
+            c.threads.sort(key=lambda t: -t.usage.value(metric))
         return Summary(
             range_key=range_key,
+            metric=metric,
             total=total,
             by_source=by_source,
             clients=rows,

@@ -11,6 +11,7 @@ from datetime import datetime
 
 from .model import DEFAULT_METRIC, SOURCE_LABELS, CodexLimits, Event, ThreadInfo, Usage, client_label
 from .parsers import ClaudeFile, CodexFile, JsonlFile
+from .paths import default_claude_dirs, default_codex_dirs
 
 RANGES = {
     "today": "Today",
@@ -20,24 +21,6 @@ RANGES = {
 }
 
 NO_TOOL = "Reply (no tools)"
-
-
-def default_claude_dirs() -> list[str]:
-    env = os.environ.get("CLAUDE_CONFIG_DIR")
-    bases = [p for p in env.split(",") if p] if env else []
-    home = os.path.expanduser("~")
-    bases += [os.path.join(home, ".claude"), os.path.join(home, ".config", "claude")]
-    seen, out = set(), []
-    for b in bases:
-        b = os.path.realpath(b)
-        if b not in seen:
-            seen.add(b)
-            out.append(b)
-    return out
-
-
-def default_codex_dir() -> str:
-    return os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
 
 
 def range_start(key: str, now: float | None = None) -> float:
@@ -55,10 +38,20 @@ def range_start(key: str, now: float | None = None) -> float:
 def project_name(cwd: str) -> str:
     if not cwd:
         return "—"
-    cwd = cwd.rstrip("/")
-    if cwd == os.path.expanduser("~") or cwd.count("/") <= 2 and cwd.startswith("/home/"):
+    # Logs written on Windows use backslashes; read them the same way on any OS.
+    norm = cwd.replace("\\", "/").rstrip("/")
+    parts = [p for p in norm.split("/") if p]
+    home = os.path.expanduser("~").replace("\\", "/").rstrip("/")
+    if norm.lower() == home.lower() or _is_home(parts):
         return "~ (home)"
-    return os.path.basename(cwd) or cwd
+    return parts[-1] if parts else cwd
+
+
+def _is_home(parts: list[str]) -> bool:
+    if parts[:1] == ["home"]:
+        return len(parts) <= 2  # /home/<user>
+    # C:\Users\<user>
+    return 2 <= len(parts) <= 3 and parts[0].endswith(":") and parts[1].lower() == "users"
 
 
 @dataclass
@@ -102,14 +95,16 @@ class Summary:
 
 
 class Store:
-    def __init__(self, claude_dirs: list[str] | None = None, codex_dir: str | None = None):
+    def __init__(self, claude_dirs: list[str] | None = None, codex_dirs: list[str] | str | None = None):
         self.claude_dirs = claude_dirs if claude_dirs is not None else default_claude_dirs()
-        self.codex_dir = codex_dir if codex_dir is not None else default_codex_dir()
+        if isinstance(codex_dirs, str):
+            codex_dirs = [codex_dirs]
+        self.codex_dirs = codex_dirs if codex_dirs is not None else default_codex_dirs()
         self.files: dict[str, JsonlFile] = {}
         self.events: dict[str, Event] = {}
         self.threads: dict[tuple[str, str], ThreadInfo] = {}
         self.limits: CodexLimits | None = None
-        self._index_mtime = -1.0
+        self._index_mtimes: dict[str, float] = {}
         self._index_names: dict[str, str] = {}
 
     # --- Sink interface -----------------------------------------------------
@@ -137,9 +132,10 @@ class Store:
         for base in self.claude_dirs:
             for p in glob.glob(os.path.join(base, "projects", "**", "*.jsonl"), recursive=True):
                 found.append((p, ClaudeFile))
-        for sub in ("sessions", "archived_sessions"):
-            for p in glob.glob(os.path.join(self.codex_dir, sub, "**", "*.jsonl"), recursive=True):
-                found.append((p, CodexFile))
+        for base in self.codex_dirs:
+            for sub in ("sessions", "archived_sessions"):
+                for p in glob.glob(os.path.join(base, sub, "**", "*.jsonl"), recursive=True):
+                    found.append((p, CodexFile))
         return found
 
     def refresh(self) -> bool:
@@ -153,18 +149,18 @@ class Store:
             size_before = f.offset
             f.update(self)
             changed |= f.offset != size_before
-        changed |= self._read_codex_index()
+        for base in self.codex_dirs:
+            changed |= self._read_codex_index(os.path.join(base, "session_index.jsonl"))
         return changed
 
-    def _read_codex_index(self) -> bool:
-        path = os.path.join(self.codex_dir, "session_index.jsonl")
+    def _read_codex_index(self, path: str) -> bool:
         try:
             mtime = os.stat(path).st_mtime
         except OSError:
             return False
-        if mtime == self._index_mtime:
+        if mtime == self._index_mtimes.get(path):
             return False
-        self._index_mtime = mtime
+        self._index_mtimes[path] = mtime
         try:
             with open(path, encoding="utf-8", errors="replace") as fh:
                 for line in fh:

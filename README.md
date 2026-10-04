@@ -51,8 +51,13 @@ PyPI into a private virtual environment) and installs the app for the current us
 | Arch, Manjaro, EndeavourOS, CachyOS | `pyside6` package |
 | Fedora | `python3-pyside6` package |
 | openSUSE Tumbleweed | `python3-pyside6` package |
-| Debian 13+, Ubuntu 24.04+ and derivatives (Mint, Pop!_OS, Zorin…) | `python3-pyside6.*` packages |
-| Debian 12, Ubuntu 22.04, openSUSE Leap, RHEL/Rocky/Alma 9, others | PyPI |
+| Debian 13+, Ubuntu 25.04+ | `python3-pyside6.*` packages |
+| Debian 12, Ubuntu 22.04/24.04 and derivatives (Mint, Pop!_OS, Zorin…), openSUSE Leap, RHEL/Rocky/Alma 9, others | PyPI |
+
+If a distribution package is missing or fails, the installer falls back to PyPI. NixOS is not handled by
+the script; use `nix-shell -p python3Packages.pyside6` and run `python -m tokenpanel` from the source tree.
+
+The installer is tested end to end (install, render, uninstall) on Ubuntu 22.04, 24.04 and 25.04; the Arch package is in daily use. Other distributions are covered by the same logic but not tested yet.
 
 Other options: `--pip` (always use PyPI), `--yes` (no confirmation prompts), `--uninstall`.
 To update: `git pull && ./install.sh`.

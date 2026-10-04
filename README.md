@@ -21,12 +21,12 @@ Tray simgesinin üzerine gelince bugünün toplamı görünür. Satırların üz
 
 Ajanlar her model çağrısında konuşmanın tamamını yeniden gönderir; bunun büyük kısmı önbellekten okunur.
 Önbellekten okunanları da saymak toplamı 30–150 kat şişirir. Bu yüzden panelin varsayılan ölçüsü
-**girdi + çıktı**dır (Codex CLI'ın gösterdiği toplamla aynı tanım). Özet ekranındaki **Ölçü** düğmesinden değiştirilebilir:
+**Claude uygulamasıyla aynı**dır (Claude Desktop'taki "Total tokens" ile aynı sonucu verir). Özet ekranındaki **Ölçü** düğmesinden değiştirilebilir:
 
 | Ölçü | Sayılanlar |
 |---|---|
-| Girdi + çıktı (varsayılan) | önbellek dışı girdi + çıktı (düşünme dahil) |
-| Claude uygulamasıyla aynı | Claude Desktop'taki "Total tokens" ile aynı yöntem: Claude'un bir yanıtı log'a bölerek yazdığı her satır ayrı sayılır (Claude için ~1,5–2,5 kat yüksek çıkar; Codex'te girdi + çıktı ile aynı) |
+| Claude uygulamasıyla aynı (varsayılan) | Claude Desktop'taki "Total tokens" ile aynı yöntem: Claude'un bir yanıtı log'a bölerek yazdığı her satır ayrı sayılır (Claude için ~1,5–2,5 kat yüksek çıkar; Codex'te girdi + çıktı ile aynı) |
+| Girdi + çıktı | her model yanıtı bir kez sayılır: önbellek dışı girdi + çıktı (düşünme dahil); Codex CLI'ın toplamıyla aynı tanım |
 | Girdi + çıktı + önbelleğe yazma | yukarıdakiler + önbelleğe ilk kez yazılan bağlam |
 | Ham | her şey; önbellekten tekrar tekrar okunan bağlam da dahil |
 
@@ -71,7 +71,7 @@ python -m tokenpanel          # depo kökünden
 Terminal çıktısı (panel açmadan):
 
 ```bash
-tokenpanel --dump --range 7d --metric io   # io | app | new | raw
+tokenpanel --dump --range 7d --metric app   # app | io | new | raw
 ```
 
 ## Veri kaynakları

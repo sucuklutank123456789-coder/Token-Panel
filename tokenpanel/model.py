@@ -32,12 +32,12 @@ CODEX_CLIENTS = {
 
 # Panelde gösterilen "token" sayısının tanımı.
 METRICS = {
-    "io": "Girdi + çıktı",
     "app": "Claude uygulamasıyla aynı",
+    "io": "Girdi + çıktı",
     "new": "Girdi + çıktı + önbelleğe yazma",
     "raw": "Ham (önbellekten okunan dahil)",
 }
-DEFAULT_METRIC = "io"
+DEFAULT_METRIC = "app"
 
 
 def client_label(source: str, client: str) -> str:

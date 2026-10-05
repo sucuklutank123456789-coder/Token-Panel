@@ -11,7 +11,6 @@ Levels:
 from __future__ import annotations
 
 import getpass
-import math
 import sys
 import time
 from dataclasses import dataclass
@@ -232,14 +231,6 @@ class Dot(QWidget):
         p.end()
 
 
-def nice_tick(peak: float) -> float:
-    """The largest round number (1, 2 or 5 × 10^n) not above peak, for the chart's one gridline."""
-    if peak <= 0:
-        return 0.0
-    mag = 10 ** math.floor(math.log10(peak))
-    return max(m * mag for m in (1, 2, 5, 10) if m * mag <= peak)
-
-
 class DailyChart(QWidget):
     """Stacked columns, one per day, Claude Code below Codex.
 
@@ -280,7 +271,7 @@ class DailyChart(QWidget):
         scale = self.PLOT_H / (peak * 1.08) if peak > 0 else 0
 
         # One hairline gridline at a round value, labelled; the baseline below.
-        tick = nice_tick(peak)
+        tick = fmt.nice_tick(peak)
         tick_y = round(base - tick * scale)
         if tick:
             p.fillRect(QRect(0, tick_y, w, 1), QColor(th.border))
@@ -823,7 +814,7 @@ class Panel(QWidget):
         if est is None or not est.windows:
             return
         th = self.theme
-        self._section(lay, "Claude usage limits" + ("" if est.official else " (estimate)"))
+        self._section(lay, "Claude usage limits" + ("" if est.partly_official else " (estimate)"))
         if est.blocked_until:
             warn = label(
                 f"{KIND_LABELS.get(est.blocked_kind, 'Usage')} limit reached · resets {fmt.clock(est.blocked_until)}",
@@ -837,7 +828,7 @@ class Panel(QWidget):
                 state = "last 7 days"
             else:
                 state = f"resets {'' if w.exact_end else '~'}{fmt.clock(w.end)}"
-            if est.official:
+            if w.official:
                 value, tip = f"{w.used_pct:.0f}%", "Claude Code's own figure for this window."
             elif w.used_pct is not None:
                 value = f"≈{w.used_pct:.0f}%"
@@ -854,6 +845,8 @@ class Panel(QWidget):
             self._limit_row(lay, name, state, w.used_pct, value, tip)
         if est.official:
             note = f"From Claude Code, {fmt.ago(est.as_of)}"
+        elif est.partly_official:
+            note = f"From Claude Code, {fmt.ago(est.as_of)}; figures marked ≈ are estimated from this computer's logs."
         else:
             note = "Estimated from this computer's logs. /usage in Claude Code shows the exact figures."
         foot = label(note, th.muted, 10)

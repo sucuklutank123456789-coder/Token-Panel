@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from datetime import datetime
 
@@ -65,3 +66,13 @@ def money(usd: float) -> str:
     if usd < 100:
         return f"${usd:,.2f}"
     return f"${usd:,.0f}"
+
+
+def nice_tick(peak: float) -> float:
+    """The largest round number (1, 2 or 5 × 10^n) not above peak, for a chart's gridline."""
+    if peak <= 0:
+        return 0.0
+    mag = 10 ** math.floor(math.log10(peak))
+    if mag > peak:  # log10 rounded up, e.g. for 999.9999999999999
+        mag /= 10
+    return max((m * mag for m in (1, 2, 5, 10) if m * mag <= peak), default=mag)

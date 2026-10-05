@@ -63,8 +63,9 @@ class PricingTest(unittest.TestCase):
             path = os.path.join(d, "prices.json")
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump({"my-model": {"input": 1, "output": 2}, "claude-haiku-4-5": {"input": 9, "output": 9},
-                           "broken": {"input": "x"}}, fh)
+                           "broken": {"input": "x"}, "bad-cache": {"input": 1, "output": 1, "cache_read": None}}, fh)
             prices = pricing.load_user_prices(path)
+        # Malformed entries are skipped, not fatal.
         self.assertEqual(set(prices), {"my-model", "claude-haiku-4-5"})
         with mock.patch.object(pricing, "_user", prices):
             u = Usage(input=1_000_000, cache_read=1_000_000, output=1_000_000)
@@ -88,6 +89,14 @@ class FormatTest(unittest.TestCase):
             ["999", "999K", "1M", "1M", "15.3M", "310K", "100K"],
         )
         self.assertEqual([fmt.money(x) for x in (0, 0.004, 12.4, 1234.6)], ["$0", "<$0.01", "$12.40", "$1,235"])
+
+    def test_nice_tick(self):
+        from tokenpanel import fmt
+
+        self.assertEqual([fmt.nice_tick(x) for x in (0, 1000, 1999, 2_300_000, 0.5)], [0, 1000, 1000, 2_000_000, 0.5])
+        # log10 rounds these up to the next power of ten; it used to crash the chart.
+        self.assertEqual(fmt.nice_tick(999.9999999999999), 500)
+        self.assertEqual(fmt.nice_tick(999999999999999), 5e14)
 
 
 if __name__ == "__main__":

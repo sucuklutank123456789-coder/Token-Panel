@@ -13,7 +13,7 @@ from .limits import CALIBRATION_DAYS, WEEK_SECONDS, ClaudeLimits, LimitHit, esti
 from .model import DEFAULT_METRIC, SOURCE_LABELS, CodexLimits, Event, ThreadInfo, Usage, client_label
 from .opencode import OpenCodeDb
 from .parsers import ClaudeFile, CodexFile, JsonlFile
-from .paths import default_claude_dirs, default_codex_dirs, default_opencode_dirs, opencode_dbs
+from .paths import claude_json_paths, default_claude_dirs, default_codex_dirs, default_opencode_dirs, opencode_dbs
 
 RANGES = {
     "today": "Today",
@@ -30,14 +30,6 @@ DAILY_DAYS = 30
 # Walking the log directories for new files is the expensive part, so it runs at most this often.
 # In between, refresh() only stats the files it already knows.
 DISCOVER_SECONDS = 60.0
-
-
-def _unique_paths(paths) -> list[str]:
-    out: list[str] = []
-    for p in paths:
-        if p not in out:
-            out.append(p)
-    return out
 
 
 def range_start(key: str, now: float | None = None) -> float:
@@ -146,16 +138,13 @@ class Store:
         self._discovered_at: float | None = None
         self.limit_hits: dict[tuple[float, str], LimitHit] = {}
         # Claude Code's own cached usage percentages (~/.claude.json, or inside CLAUDE_CONFIG_DIR).
-        self.claude_json = _unique_paths(
-            p
-            for base in self.claude_dirs
-            for p in (
-                os.path.join(base, ".claude.json"),
-                *([os.path.join(os.path.dirname(base), ".claude.json")] if os.path.basename(base) == ".claude" else []),
-            )
-        )
+        self.claude_json = claude_json_paths(self.claude_dirs)
         self._official_stamp: dict[str, float] = {}
         self._official: dict[str, tuple] = {}
+        # Results that don't depend on the range or metric, computed once per data change and minute.
+        self._generation = 0
+        self._extras_key: tuple | None = None
+        self._extras: tuple[list[DayRow], ClaudeLimits | None] = ([], None)
         self._index_names: dict[str, str] = {}
 
     # --- Sink interface -----------------------------------------------------
@@ -193,7 +182,10 @@ class Store:
                 continue
             self._official_stamp[path] = mtime
             snap = read_official(path)
-            if snap is not None and snap != self._official.get(path):
+            if snap is None:
+                # Rewritten without the cached usage (logged out, partial write): forget the old figures.
+                changed |= self._official.pop(path, None) is not None
+            elif snap != self._official.get(path):
                 self._official[path] = snap
                 changed = True
         return changed
@@ -254,7 +246,31 @@ class Store:
         for base in self.codex_dirs:
             changed |= self._read_codex_index(os.path.join(base, "session_index.jsonl"))
         changed |= self._read_official()
+        if changed:
+            self._generation += 1
         return changed
+
+    def _daily_and_limits(self, now: float) -> tuple[list[DayRow], ClaudeLimits | None]:
+        """The 30-day table and Claude's limits: the same for every range and metric, so computed once."""
+        key = (self._generation, int(now // 60), len(self.events))
+        if key == self._extras_key:
+            return self._extras
+        today = datetime.fromtimestamp(now).date()
+        days = [today - timedelta(days=i) for i in range(DAILY_DAYS - 1, -1, -1)]
+        daily = {d: DayRow(d, {s: Usage() for s in SOURCE_LABELS}) for d in days}
+        daily_start = datetime.combine(days[0], datetime.min.time()).timestamp()
+        limits_start = now - CALIBRATION_DAYS * 86400 - WEEK_SECONDS
+        claude_recent: list[Event] = []
+        for ev in self.events.values():
+            if ev.source == "claude" and ev.ts >= limits_start:
+                claude_recent.append(ev)
+            if ev.ts >= daily_start:
+                row = daily.get(datetime.fromtimestamp(ev.ts).date())
+                if row is not None:
+                    row.by_source.setdefault(ev.source, Usage()).add(ev.usage)
+        limits = estimate(claude_recent, list(self.limit_hits.values()), self.official_limits(), now)
+        self._extras_key, self._extras = key, (list(daily.values()), limits)
+        return self._extras
 
     def _read_codex_index(self, path: str) -> bool:
         try:
@@ -288,21 +304,9 @@ class Store:
         by_source: dict[str, Usage] = {s: Usage() for s in SOURCE_LABELS}
         clients: dict[tuple[str, str], ClientRow] = {}
         threads: dict[tuple[str, str, str], ThreadRow] = {}
-        today = datetime.fromtimestamp(time.time() if now is None else now).date()
-        days = [today - timedelta(days=i) for i in range(DAILY_DAYS - 1, -1, -1)]
-        daily = {d: DayRow(d, {s: Usage() for s in SOURCE_LABELS}) for d in days}
-        daily_start = datetime.combine(days[0], datetime.min.time()).timestamp()
-        now_ts = time.time() if now is None else now
-        limits_start = now_ts - CALIBRATION_DAYS * 86400 - WEEK_SECONDS
-        claude_recent: list[Event] = []
+        daily, claude_limits = self._daily_and_limits(time.time() if now is None else now)
 
         for ev in self.events.values():
-            if ev.source == "claude" and ev.ts >= limits_start:
-                claude_recent.append(ev)
-            if ev.ts >= daily_start:
-                row = daily.get(datetime.fromtimestamp(ev.ts).date())
-                if row is not None:
-                    row.by_source.setdefault(ev.source, Usage()).add(ev.usage)
             if ev.ts < start:
                 continue
             u = ev.usage
@@ -357,6 +361,6 @@ class Store:
             limits=self.limits,
             file_count=len(self.files),
             generated_at=time.time(),
-            daily=list(daily.values()),
-            claude_limits=estimate(claude_recent, list(self.limit_hits.values()), self.official_limits(), now_ts),
+            daily=daily,
+            claude_limits=claude_limits,
         )

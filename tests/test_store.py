@@ -344,6 +344,18 @@ class PathsTest(unittest.TestCase):
         self.assertEqual(project_name("/"), "/")
         self.assertEqual(project_name(""), "—")
 
+    def test_claude_json_next_to_a_symlinked_claude_dir(self):
+        with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home}):
+            real = os.path.join(home, "dotfiles", "claude-config")
+            os.makedirs(real)
+            try:
+                os.symlink(real, os.path.join(home, ".claude"))
+            except (OSError, NotImplementedError):
+                self.skipTest("no symlinks here")
+            found = paths.claude_json_paths(paths.default_claude_dirs())
+            self.assertIn(os.path.join(home, ".claude.json"), found)
+            self.assertIn(os.path.join(os.path.realpath(real), ".claude.json"), found)
+
     def test_default_dirs(self):
         with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home}):
             os.environ.pop("CLAUDE_CONFIG_DIR", None)

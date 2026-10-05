@@ -126,11 +126,11 @@ def load_user_prices(path: str | None = None) -> dict[str, Price]:
             continue
         try:
             inp, outp = float(p["input"]), float(p["output"])
+            read = float(p.get("cache_read", inp))
+            write = float(p.get("cache_write", inp))
+            write_1h = float(p["cache_write_1h"]) if "cache_write_1h" in p else None
         except (KeyError, TypeError, ValueError):
-            continue
-        read = float(p.get("cache_read", inp))
-        write = float(p.get("cache_write", inp))
-        write_1h = float(p["cache_write_1h"]) if "cache_write_1h" in p else None
+            continue  # skip a malformed entry, keep the rest
         out[normalize(name)] = Price(inp, outp, read, write, write_1h)
     return out
 

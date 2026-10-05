@@ -108,6 +108,45 @@ class OpenCodeTest(unittest.TestCase):
         self.assertFalse(self.store.refresh(discover=True))
         self.assertEqual(self.store.summarize("all").by_source["opencode"].input, 300)
 
+    def test_tool_updated_after_its_step(self):
+        # OpenCode can update a tool part (pruning its output) after the step finished; it still belongs there.
+        self.session("ses_a", "One")
+        self.message("msg_1", "ses_a", "gpt-5.5")
+        self.part("msg_1", "ses_a", {"type": "tool", "tool": "read"})
+        self.step("msg_1", "ses_a", 100, 10)
+        self.con.execute("UPDATE part SET time_updated = ? WHERE id = 'prt_0001'", (T0 + 99_000,))
+        s = self.summary()
+        t = [c for c in s.clients if c.source == "opencode"][0].threads[0]
+        self.assertEqual(set(t.tools), {"read"})
+        # Seen only in a later round: added to the step it belongs to.
+        self.part("msg_1", "ses_a", {"type": "tool", "tool": "edit"})
+        self.con.execute("UPDATE part SET id = 'prt_0000b', time_updated = ? WHERE id = 'prt_0003'", (T0 + 100_000,))
+        s = self.summary()
+        t = [c for c in s.clients if c.source == "opencode"][0].threads[0]
+        self.assertEqual(set(t.tools), {"read", "edit"})
+
+    def test_retries_when_the_database_cannot_be_read(self):
+        self.session("ses_a", "One")
+        self.message("msg_1", "ses_a", "gpt-5.5")
+        self.step("msg_1", "ses_a", 100, 10)
+        self.con.commit()
+        with mock.patch("tokenpanel.opencode.OpenCodeDb._connect", return_value=None):
+            self.store.refresh(discover=True)
+        self.assertEqual(self.store.summarize("all").by_source["opencode"].input, 0)
+        # Nothing changed on disk since, but the next round reads it.
+        self.store.refresh()
+        self.assertEqual(self.store.summarize("all").by_source["opencode"].input, 100)
+
+    def test_step_before_its_message_row(self):
+        self.session("ses_a", "One")
+        self.step("msg_1", "ses_a", 100, 10)  # the message row isn't there (yet)
+        self.summary()
+        self.message("msg_1", "ses_a", "gpt-5.5")
+        self.step("msg_1", "ses_a", 200, 20)
+        s = self.summary()
+        t = [c for c in s.clients if c.source == "opencode"][0].threads[0]
+        self.assertIn("gpt-5.5", t.model_usage)  # not stuck on the empty model from the first lookup
+
     def test_unreadable_or_missing_database(self):
         with open(os.path.join(self.dir, "opencode-beta.db"), "wb") as fh:
             fh.write(b"not a database")

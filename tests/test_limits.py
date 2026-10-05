@@ -56,9 +56,18 @@ class EstimateTest(unittest.TestCase):
         self.assertTrue(est.official)
         self.assertEqual([(w.kind, w.used_pct) for w in est.windows], [("session", 37.0), ("weekly", 12.0)])
         self.assertEqual(est.windows[0].start, NOW - 3 * H)
+        self.assertEqual(est.as_of, NOW - 600)
         # Once every window in it has reset, the estimate takes over.
         est = estimate([ev(NOW - H, 1.0)], [], (NOW - 9 * H, {"session": (90.0, NOW - H)}), NOW)
+        self.assertFalse(est.partly_official)
+        # A snapshot whose 5-hour window has reset but whose week hasn't: estimate the session, keep the week.
+        est = estimate([ev(NOW - H, 1.0)], [], (NOW - 6 * H, {"session": (90.0, NOW - H), "weekly": (40.0, NOW + H)}),
+                       NOW)
         self.assertFalse(est.official)
+        self.assertTrue(est.partly_official)
+        self.assertEqual([(w.kind, w.official) for w in est.windows], [("session", False), ("weekly", True)])
+        self.assertAlmostEqual(est.windows[0].cost, 1.0)
+        self.assertEqual(est.windows[1].used_pct, 40.0)
 
     def test_calibrated_from_the_last_limit_hit(self):
         day = 86400
@@ -151,8 +160,16 @@ class StoreWiringTest(unittest.TestCase):
                     "five_hour": {"utilization": 100, "resets_at": NOW + 4 * H}}}}, fh)
             self.assertTrue(store.refresh())
             est = store.summarize("all", now=NOW).claude_limits
-            self.assertTrue(est.official)
+            self.assertTrue(est.partly_official)  # only the 5-hour figure is cached; the week stays estimated
+            self.assertTrue(est.windows[0].official)
             self.assertEqual(est.windows[0].used_pct, 100)
+            self.assertFalse(est.windows[1].official)
+            # Rewritten without the cached usage: the old figures are dropped.
+            with open(os.path.join(claude, ".claude.json"), "w", encoding="utf-8") as fh:
+                json.dump({"numStartups": 3}, fh)
+            os.utime(os.path.join(claude, ".claude.json"), (NOW + 5, NOW + 5))
+            self.assertTrue(store.refresh())
+            self.assertFalse(store.summarize("all", now=NOW).claude_limits.partly_official)
 
 
 if __name__ == "__main__":

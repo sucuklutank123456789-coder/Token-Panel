@@ -67,15 +67,24 @@ class Window:
     cap: float | None = None  # estimated dollars at which the limit is reached
     cap_from: float = 0.0  # when the limit hit used for the cap happened
     exact_end: bool = False  # end is a known reset time, not a guess
+    official: bool = False  # used_pct is Claude Code's own figure
 
 
 @dataclass
 class ClaudeLimits:
-    official: bool  # True: Claude Code's own numbers (as of `as_of`); False: an estimate from the logs
-    as_of: float
+    as_of: float  # when Claude Code fetched its figures (official windows), else when estimated
     windows: list[Window] = field(default_factory=list)
     blocked_until: float = 0.0  # a limit was reached and resets then (0 if not)
     blocked_kind: str = ""
+
+    @property
+    def official(self) -> bool:
+        """Every window shown is Claude Code's own figure."""
+        return bool(self.windows) and all(w.official for w in self.windows)
+
+    @property
+    def partly_official(self) -> bool:
+        return any(w.official for w in self.windows)
 
 
 # --- Limit messages in transcripts -------------------------------------------------------------------------
@@ -230,18 +239,10 @@ def estimate(
     blocked = next((h for h in reversed(hits) if h.resets_at > now), None)
     blocked_until, blocked_kind = (blocked.resets_at, blocked.kind) if blocked else (0.0, "")
 
-    if official is not None:
-        fetched, kinds = official
-        live = {k: v for k, v in kinds.items() if v[1] > now}
-        if live:
-            windows = []
-            for kind, (pct, resets) in live.items():
-                length = SESSION_SECONDS if kind == "session" else WEEK_SECONDS
-                windows.append(Window(kind, resets - length, resets, used_pct=pct, exact_end=True))
-            windows.sort(key=lambda w: list(KIND_LABELS).index(w.kind))
-            return ClaudeLimits(True, fetched, windows, blocked_until, blocked_kind)
-
-    if not events and not hits:
+    fetched, kinds = official if official is not None else (0.0, {})
+    # Official figures whose window hasn't reset yet; other windows fall back to the estimate.
+    live = {k: v for k, v in kinds.items() if v[1] > now}
+    if not events and not hits and not live:
         return None
     recent = [h for h in hits if h.ts > now - CALIBRATION_DAYS * 86400]
     windows = []
@@ -283,4 +284,11 @@ def estimate(
     w.cost = _cost(events, w.start, now + 1)
     w.used_pct = w.cost * 100 / w.cap if w.cap else None
     windows.append(w)
-    return ClaudeLimits(False, now, windows, blocked_until, blocked_kind)
+
+    if live:
+        windows = [w for w in windows if w.kind not in live]
+        for kind, (pct, resets) in live.items():
+            length = SESSION_SECONDS if kind == "session" else WEEK_SECONDS
+            windows.append(Window(kind, resets - length, resets, used_pct=pct, exact_end=True, official=True))
+        windows.sort(key=lambda w: list(KIND_LABELS).index(w.kind))
+    return ClaudeLimits(fetched if live else now, windows, blocked_until, blocked_kind)

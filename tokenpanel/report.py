@@ -27,12 +27,17 @@ def render(s: Summary, max_threads: int = 5) -> str:
         parts = []
         for w in est.windows:
             if w.used_pct is not None:
-                used = f"{'' if est.official else '≈'}{w.used_pct:.0f}%"
+                used = f"{'' if w.official else '≈'}{w.used_pct:.0f}%"
             else:
                 used = f"{fmt.money(w.cost)} used"
             when = "last 7 days" if w.kind == "weekly" and not w.exact_end else f"resets {fmt.clock(w.end)}"
             parts.append(f"{KIND_LABELS.get(w.kind, w.kind)} {used} ({when})")
-        source = f"from Claude Code, {fmt.ago(est.as_of)}" if est.official else "estimate"
+        if est.official:
+            source = f"from Claude Code, {fmt.ago(est.as_of)}"
+        elif est.partly_official:
+            source = f"from Claude Code, {fmt.ago(est.as_of)}; ≈ estimated"
+        else:
+            source = "estimate"
         out.append(f"  Claude limits ({source}): " + ", ".join(parts))
         if est.blocked_until:
             kind = KIND_LABELS.get(est.blocked_kind, "")

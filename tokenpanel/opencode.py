@@ -45,6 +45,7 @@ class OpenCodeDb:
         self.messages: dict[str, tuple[str, str, str]] = {}  # message id -> (model, variant, cwd)
         self.pending_tools: dict[str, list[tuple[str, str]]] = {}  # message id -> [(part id, tool)]
         self.tool_parts: set[str] = set()
+        self.steps: dict[str, list[tuple[str, Event]]] = {}  # message id -> [(step part id, its event)]
         self.roots: dict[str, str] = {}  # session id -> parent session id (subagents)
 
     def changed(self, st: os.stat_result) -> bool:
@@ -65,20 +66,27 @@ class OpenCodeDb:
         uri = "file:" + quote(os.path.abspath(self.path).replace("\\", "/"), safe="/:") + "?mode=ro"
         try:
             con = sqlite3.connect(uri, uri=True, timeout=2)
-            con.execute("PRAGMA query_only = 1")
-            return con
         except sqlite3.Error:
             return None
+        try:
+            con.execute("PRAGMA query_only = 1")
+        except sqlite3.Error:
+            con.close()
+            return None
+        return con
 
     def update(self, sink: Sink) -> None:
         con = self._connect()
         if con is None:
+            self.stamp = None  # try again next round even if the file doesn't change
             return
         try:
             self._sessions(con, sink)
             self._parts(con, sink)
         except sqlite3.Error:
-            pass  # a schema this version doesn't know, or the database is busy; try again next round
+            # Busy, or a schema this version doesn't know: try again next round. Rows read so far are kept, and
+            # re-reading them is harmless.
+            self.stamp = None
         finally:
             con.close()
 
@@ -117,6 +125,9 @@ class OpenCodeDb:
             " ORDER BY time_updated, id",
             (self.part_seen,),
         ).fetchall()
+        # Rows come in update order, but a tool part can be updated after its step finished (when OpenCode
+        # prunes old tool output). Part ids sort by creation, so handle each batch in creation order.
+        rows.sort(key=lambda r: r[0])
         for pid, mid, sid, created, updated, pdata in rows:
             self.part_seen = max(self.part_seen, updated or 0)
             self.offset += 1
@@ -125,15 +136,25 @@ class OpenCodeDb:
             if kind == "tool":
                 if pid not in self.tool_parts:
                     self.tool_parts.add(pid)
-                    self.pending_tools.setdefault(mid, []).append((pid, part.get("tool") or "tool"))
+                    self._tool(mid, pid, part.get("tool") or "tool")
             elif kind == "step-finish":
                 self._step(pid, mid, sid, created, part, self._message(con, mid), sink)
+
+    def _tool(self, mid: str, pid: str, name: str) -> None:
+        # Seen only now, but its step may already be counted (read in an earlier round): add it there.
+        step = next((ev for step_id, ev in self.steps.get(mid, []) if step_id > pid), None)
+        if step is not None:
+            step.tools.append(name)
+        else:
+            self.pending_tools.setdefault(mid, []).append((pid, name))
 
     def _message(self, con: sqlite3.Connection, mid: str) -> tuple[str, str, str]:
         msg = self.messages.get(mid)
         if msg is None:
             row = con.execute("SELECT data FROM message WHERE id = ?", (mid,)).fetchone()
-            d = _load(row[0]) if row else {}
+            if row is None:
+                return "", "", ""  # not visible yet; don't remember that
+            d = _load(row[0])
             path = d.get("path") if isinstance(d.get("path"), dict) else {}
             msg = self.messages[mid] = (d.get("modelID") or "", d.get("variant") or "", path.get("cwd") or "")
         return msg
@@ -176,7 +197,8 @@ class OpenCodeDb:
             usage=u,
             tools=tools,
         )
-        sink.add_event(f"opencode:{pid}", ev)
+        if sink.add_event(f"opencode:{pid}", ev) is None:
+            self.steps.setdefault(mid, []).append((pid, ev))
         t = sink.thread("opencode", thread)
         if not t.cwd and cwd:
             t.cwd = cwd

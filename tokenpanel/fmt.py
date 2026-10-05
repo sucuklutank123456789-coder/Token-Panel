@@ -50,3 +50,14 @@ def clock(ts: float) -> str:
     if dt.date() == datetime.now().date():
         return dt.strftime("%H:%M")
     return dt.strftime("%b %d %H:%M")
+
+
+def money(usd: float) -> str:
+    """0.004 -> '<$0.01', 12.4 -> '$12.40', 1234.6 -> '$1,235'"""
+    if usd <= 0:
+        return "$0"
+    if usd < 0.01:
+        return "<$0.01"
+    if usd < 100:
+        return f"${usd:,.2f}"
+    return f"${usd:,.0f}"

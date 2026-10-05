@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from tokenpanel import autostart, paths
+from tokenpanel import autostart, paths, pricing
 from tokenpanel import store as store_mod
 from tokenpanel.__main__ import console_encoding
 from tokenpanel.store import Store, project_name
@@ -73,10 +73,14 @@ def codex_call(name):
 
 class StoreTest(unittest.TestCase):
     def setUp(self):
+        patcher = mock.patch.object(pricing, "_user", {})  # no user price file from this machine
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.claude = os.path.join(self.tmp.name, "claude")
         self.codex = os.path.join(self.tmp.name, "codex")
-        self.store = Store([self.claude], self.codex)
+        self.opencode = os.path.join(self.tmp.name, "opencode")
+        self.store = Store([self.claude], self.codex, [self.opencode])
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -119,6 +123,13 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(s.total.value("raw"), 142)
         # The app method counts split lines separately: m1 twice (15+15) + 20 + 7.
         self.assertEqual(s.total.value("app"), 57)
+        # Every metric splits into input and output.
+        self.assertEqual(s.total.split("app"), (20, 37))
+        self.assertEqual(s.total.split("io"), (10, 32))
+        self.assertEqual(s.total.split("raw"), (110, 32))
+        # A response split across lines is priced once: Opus 5.5 ($4 in, $0.20 cache read, $20 out) for m1
+        # and m3, Sonnet 5.5 ($10 out) for m2.
+        self.assertAlmostEqual(s.total.cost, (10 * 4 + 100 * 0.2 + 5 * 20 + 20 * 10 + 7 * 20) / 1e6)
         self.assertEqual(c[("claude", "sdk-ts")].usage.total, 7)
 
     def test_codex_records_models_tools_and_limits(self):
@@ -190,6 +201,7 @@ class StoreTest(unittest.TestCase):
         s, c = self.clients()
         u = c[("codex", "Codex Desktop")].usage
         self.assertEqual(u.value("app"), (1400 - 700) + 120)
+        self.assertEqual(u.split("app"), (1400 - 700, 120))
         self.assertEqual(u.value("io"), (400 + 100) + (4000 + 300) + (300 + 20))
 
     def test_codex_legacy_token_count_fallback(self):
@@ -240,7 +252,7 @@ class StoreTest(unittest.TestCase):
                     [codex_meta("t2", "codex-tui"), codex_turn("u1", "gpt-5.5", "high"),
                      codex_record("r2", "u1", 50, 0, 5)])
         write_jsonl(os.path.join(other, "session_index.jsonl"), [{"id": "t2", "thread_name": "From WSL"}])
-        store = Store([self.claude], [self.codex, other])
+        store = Store([self.claude], [self.codex, other], [self.opencode])
         store.refresh()
         s = store.summarize("all")
         self.assertEqual(s.total.total, 110 + 55)

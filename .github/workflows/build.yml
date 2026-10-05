@@ -56,7 +56,7 @@ jobs:
           [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
           $logs = Join-Path $env:RUNNER_TEMP "logs"
           python scripts/sample_logs.py $logs
-          $dirs = @("--claude-dir", "$logs\claude", "--codex-dir", "$logs\codex")
+          $dirs = @("--claude-dir", "$logs\claude", "--codex-dir", "$logs\codex", "--opencode-dir", "$logs\opencode")
           $exe = Resolve-Path dist\TokenPanel.exe
 
           # --dump: reads the sample logs (Windows-style paths) and prints the summary.
@@ -64,7 +64,7 @@ jobs:
             -RedirectStandardOutput dump.txt -RedirectStandardError dump-err.txt
           Get-Content dump.txt, dump-err.txt
           if ($p.ExitCode -ne 0) { throw "--dump exited with $($p.ExitCode)" }
-          foreach ($want in "Claude Code · CLI", "Codex · Desktop", "token-panel") {
+          foreach ($want in "Claude Code · CLI", "Codex · Desktop", "OpenCode · All clients", "token-panel", "API cost") {
             if (-not (Select-String -Path dump.txt -SimpleMatch $want -Quiet)) { throw "--dump output lacks '$want'" }
           }
 
@@ -133,11 +133,12 @@ jobs:
           logs="$RUNNER_TEMP/logs"
           python scripts/sample_logs.py "$logs"
           exe=dist/TokenPanel.app/Contents/MacOS/TokenPanel
-          dirs=(--claude-dir "$logs/claude" --codex-dir "$logs/codex")
+          dirs=(--claude-dir "$logs/claude" --codex-dir "$logs/codex" --opencode-dir "$logs/opencode")
 
           # --dump: reads the sample logs and prints the summary.
           "$exe" --dump --range today "${dirs[@]}" | tee dump.txt
-          for want in "Claude Code · CLI" "Codex · Desktop" "token-panel" "Yanıtla çiz"; do
+          for want in "Claude Code · CLI" "Codex · Desktop" "OpenCode · All clients" "token-panel" "Yanıtla çiz" \
+            "API cost"; do
             grep -qF "$want" dump.txt || { echo "--dump output lacks '$want'"; exit 1; }
           done
 

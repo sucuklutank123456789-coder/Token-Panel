@@ -10,8 +10,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
 from .model import DEFAULT_METRIC, SOURCE_LABELS, CodexLimits, Event, ThreadInfo, Usage, client_label
+from .opencode import OpenCodeDb
 from .parsers import ClaudeFile, CodexFile, JsonlFile
-from .paths import default_claude_dirs, default_codex_dirs
+from .paths import default_claude_dirs, default_codex_dirs, default_opencode_dirs, opencode_dbs
 
 RANGES = {
     "today": "Today",
@@ -116,12 +117,18 @@ class Summary:
 
 
 class Store:
-    def __init__(self, claude_dirs: list[str] | None = None, codex_dirs: list[str] | str | None = None):
+    def __init__(
+        self,
+        claude_dirs: list[str] | None = None,
+        codex_dirs: list[str] | str | None = None,
+        opencode_dirs: list[str] | None = None,
+    ):
         self.claude_dirs = claude_dirs if claude_dirs is not None else default_claude_dirs()
         if isinstance(codex_dirs, str):
             codex_dirs = [codex_dirs]
         self.codex_dirs = codex_dirs if codex_dirs is not None else default_codex_dirs()
-        self.files: dict[str, JsonlFile] = {}
+        self.opencode_dirs = opencode_dirs if opencode_dirs is not None else default_opencode_dirs()
+        self.files: dict[str, JsonlFile | OpenCodeDb] = {}
         self.events: dict[str, Event] = {}
         self.threads: dict[tuple[str, str], ThreadInfo] = {}
         self.limits: CodexLimits | None = None
@@ -158,6 +165,8 @@ class Store:
             for sub in ("sessions", "archived_sessions"):
                 for p in glob.glob(os.path.join(base, sub, "**", "*.jsonl"), recursive=True):
                     found.append((p, CodexFile))
+        for p in opencode_dbs(self.opencode_dirs):
+            found.append((p, OpenCodeDb))
         return found
 
     def _sync_files(self) -> None:

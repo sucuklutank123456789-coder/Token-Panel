@@ -1,17 +1,19 @@
 # Token Panel
 
-A small system tray app for Linux, Windows and macOS that shows how many tokens Claude Code and Codex use.
-It never talks to an API; it reads the session logs both tools write to your computer.
+A small system tray app for Linux, Windows and macOS that shows how many tokens Claude Code, Codex and
+OpenCode use, and what they would cost at API prices. It never talks to an API; it reads the session logs
+these tools write to your computer.
 
 ## What it shows
 
 The panel opens layer by layer:
 
-1. **Overview** — total tokens for the selected range (Today / 7d / 30d / All), the Claude Code vs Codex
-   share, a daily chart of the last 30 days, and Codex's 5-hour and weekly rate limits. Hover a column for its
-   numbers; click the chart for the same days as a table. Days outside the selected range are drawn faded.
+1. **Overview** — total tokens for the selected range (Today / 7d / 30d / All) with its input / output split
+   and estimated API cost, the Claude Code / Codex / OpenCode share, a daily chart of the last 30 days, and
+   Codex's 5-hour and weekly rate limits. Hover a column for its numbers; click the chart for the same days as a
+   table. Days outside the selected range are drawn faded.
 2. **Details** — per-tool breakdown by client: CLI, Desktop, VS Code extension, ACP (Zed);
-   the models used and the number of threads for each.
+   the models used, the number of threads and the estimated cost for each.
 3. **Threads** — the threads of the selected client: title, project, models, last activity.
 4. **Thread details** — breakdown by model, by token type (cache / new input / output / thinking) and
    "spent on" (approximate, by tool: Bash, Read, exec_command, apply_patch…).
@@ -31,7 +33,33 @@ It can be changed with the **Metric** button on the overview:
 | Input + output + cache writes | the above plus context written to the cache for the first time |
 | Raw | everything, including context re-read from the cache on every call |
 
-The choice is remembered.
+The choice is remembered. Input and output are shown under the same metric.
+
+### API cost estimate
+
+Each model call is priced at the provider's pay-as-you-go API rates for its model: new input, cache reads,
+cache writes (Claude's 5-minute and 1-hour writes separately) and output (thinking included), plus Claude fast
+mode and OpenAI's long-context tier. It always counts every call once, whatever the metric. It is an estimate of
+what the same work would cost on the API; Claude Pro/Max and ChatGPT plans are billed differently.
+
+- Claude prices come from Anthropic's pricing page; OpenAI prices from OpenAI's pricing and model pages
+  (checked 2026-10-05; the OpenAI figures could only be read through search results, so double-check them).
+- For OpenCode, a model the panel doesn't know is priced with the cost OpenCode itself logged.
+- Models without a known price are left out of the cost and reported as "tokens without a known price".
+
+Prices can be added or corrected in `prices.json`, in USD per million tokens:
+
+```json
+{
+  "gpt-6": {"input": 2.0, "cache_read": 0.2, "output": 10.0},
+  "my-local-model": {"input": 0, "output": 0}
+}
+```
+
+`cache_read` and `cache_write` default to the input price; `cache_write_1h` is optional. The file lives at
+`~/.config/tokenpanel/prices.json` on Linux, `%APPDATA%\tokenpanel\prices.json` on Windows and
+`~/Library/Application Support/tokenpanel/prices.json` on macOS (or set `TOKENPANEL_PRICES`). Restart the panel
+after editing it.
 
 ## Install
 
@@ -147,6 +175,7 @@ tokenpanel --dump --range 7d --metric app   # app | io | new | raw
 |---|---|---|
 | Claude Code | `~/.claude/projects/**/*.jsonl`, on Windows `%USERPROFILE%\.claude` (honours `CLAUDE_CONFIG_DIR`) | `entrypoint`: `cli`, `claude-desktop`, `claude-vscode`, `sdk-ts` (Zed ACP) |
 | Codex | `~/.codex/sessions/**/*.jsonl`, `~/.codex/archived_sessions/`, on Windows `%USERPROFILE%\.codex` (honours `CODEX_HOME`) | `originator`: `codex-tui`, `Codex Desktop`, `codex_vscode`, `zed` |
+| OpenCode (1.2+) | `~/.local/share/opencode/opencode.db` on every OS, on Windows `%USERPROFILE%\.local\share\opencode` (honours `XDG_DATA_HOME`, `OPENCODE_DB`); read-only | not recorded — shown as "All clients" |
 
 Known limitations:
 
@@ -154,6 +183,9 @@ Known limitations:
 - On the Claude side `sdk-ts` covers every tool built on the Agent SDK; it equals ACP only if Zed is the only one you use.
 - Codex Desktop opens each chat in an auto-created folder, so the "project" there is that folder's name.
 - "Spent on" is approximate: a model call's tokens are split evenly across the tools used in that call.
+- OpenCode doesn't record whether a session ran in the terminal, the desktop app or over ACP, so it has one
+  client row. Its subagent sessions are counted in the conversation that started them. Versions before 1.2
+  stored sessions as JSON files, which are not read (upgrading imports them into the database).
 
 `scripts/diagnose.py` prints Claude Code token counts under each definition, which helps compare the panel
 with the Claude app.

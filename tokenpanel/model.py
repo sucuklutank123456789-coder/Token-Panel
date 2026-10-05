@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 SOURCE_LABELS = {
     "claude": "Claude Code",
     "codex": "Codex",
+    "opencode": "OpenCode",
 }
 
 # Claude Code: the "entrypoint" field on every line.
@@ -29,6 +30,9 @@ CODEX_CLIENTS = {
     "zed": "ACP (Zed)",
 }
 
+# OpenCode doesn't record which frontend (terminal, desktop app, ACP) was used.
+OPENCODE_CLIENTS = {"opencode": "All clients"}
+
 
 # What the panel counts as "tokens".
 METRICS = {
@@ -41,7 +45,7 @@ DEFAULT_METRIC = "app"
 
 
 def client_label(source: str, client: str) -> str:
-    table = CLAUDE_CLIENTS if source == "claude" else CODEX_CLIENTS
+    table = {"claude": CLAUDE_CLIENTS, "codex": CODEX_CLIENTS, "opencode": OPENCODE_CLIENTS}.get(source, {})
     return table.get(client, client or "Unknown")
 
 
@@ -58,14 +62,22 @@ class Usage:
     cache_write: int = 0
     output: int = 0
     reasoning: int = 0
-    # Input + output as the official apps report it.
+    # Input and output as the official apps report them.
     # Claude: the stats screen counts every transcript line of a response that was split across lines.
     # Codex: its own counter (token_count) leaves out conversation compaction calls.
-    app_io: float = 0
+    app_in: float = 0
+    app_out: float = 0
+    # Estimated API price in USD, and the tokens (input + output) of calls whose model has no known price.
+    cost: float = 0
+    unpriced: float = 0
 
     @property
     def total(self) -> int:
         return self.input + self.cache_read + self.cache_write + self.output
+
+    @property
+    def app_io(self) -> float:
+        return self.app_in + self.app_out
 
     def value(self, metric: str) -> float:
         """Value under the given metric.
@@ -75,18 +87,23 @@ class Usage:
         new: io + input written to the cache
         raw: everything, including context re-read from the cache on every call
         """
+        inp, out = self.split(metric)
+        return inp + out
+
+    def split(self, metric: str) -> tuple[float, float]:
+        """(input part, output part) of the value under the given metric."""
         if metric == "app":
-            return self.app_io
+            return self.app_in, self.app_out
         if metric == "raw":
-            return self.total
+            return self.input + self.cache_write + self.cache_read, self.output
         if metric == "new":
-            return self.input + self.cache_write + self.output
-        return self.input + self.output
+            return self.input + self.cache_write, self.output
+        return self.input, self.output
 
     def scaled(self, f: float) -> Usage:
         return Usage(
             self.input * f, self.cache_read * f, self.cache_write * f, self.output * f, self.reasoning * f,
-            self.app_io * f,
+            self.app_in * f, self.app_out * f, self.cost * f, self.unpriced * f,
         )
 
     def add(self, other: Usage) -> None:
@@ -95,7 +112,10 @@ class Usage:
         self.cache_write += other.cache_write
         self.output += other.output
         self.reasoning += other.reasoning
-        self.app_io += other.app_io
+        self.app_in += other.app_in
+        self.app_out += other.app_out
+        self.cost += other.cost
+        self.unpriced += other.unpriced
 
     def merge_max(self, other: Usage) -> None:
         self.input = max(self.input, other.input)
@@ -117,6 +137,8 @@ class Event:
     effort: str
     usage: Usage
     tools: list[str] = field(default_factory=list)
+    write_1h: int = 0  # part of usage.cache_write that went to the 1-hour cache (priced higher)
+    fast: bool = False  # Claude fast mode (priced higher)
 
 
 @dataclass

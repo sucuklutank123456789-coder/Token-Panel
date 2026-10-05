@@ -2,7 +2,8 @@
 
     python scripts/sample_logs.py OUT_DIR
 
-creates OUT_DIR/claude and OUT_DIR/codex; pass them as --claude-dir and --codex-dir.
+creates OUT_DIR/claude, OUT_DIR/codex and OUT_DIR/opencode; pass them as --claude-dir, --codex-dir and
+--opencode-dir.
 The working directories are Windows paths, like logs written on Windows.
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 import time
 from datetime import datetime, timezone
@@ -61,6 +63,38 @@ def write_sample(out: str) -> None:
         {"timestamp": now, "type": "event_msg",
          "payload": {"type": "token_count", "info": {"total_token_usage": usage, "last_token_usage": usage}}},
     ])
+    write_opencode(os.path.join(out, "opencode"), cwd)
+
+
+def write_opencode(directory: str, cwd: str) -> None:
+    """A minimal opencode.db with the tables and columns Token Panel reads."""
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, "opencode.db")
+    if os.path.exists(path):
+        os.remove(path)
+    ms = int(time.time() * 1000)
+    con = sqlite3.connect(path)
+    con.executescript(
+        "CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, title TEXT,"
+        " time_created INTEGER, time_updated INTEGER);"
+        "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER,"
+        " time_updated INTEGER, data TEXT);"
+        "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER,"
+        " time_updated INTEGER, data TEXT);"
+    )
+    con.execute("INSERT INTO session VALUES ('ses_1', NULL, ?, 'Sample OpenCode session', ?, ?)", (cwd, ms, ms))
+    msg = {"role": "assistant", "modelID": "claude-sonnet-5-5", "providerID": "anthropic", "path": {"cwd": cwd}}
+    con.execute("INSERT INTO message VALUES ('msg_1', 'ses_1', ?, ?, ?)", (ms, ms, json.dumps(msg)))
+    parts = [
+        {"type": "tool", "tool": "bash", "state": {"status": "completed"}},
+        {"type": "step-finish", "cost": 0, "tokens": {"input": 900, "output": 120, "reasoning": 30,
+                                                      "cache": {"read": 2000, "write": 0}}},
+    ]
+    for i, part in enumerate(parts):
+        con.execute("INSERT INTO part VALUES (?, 'msg_1', 'ses_1', ?, ?, ?)",
+                    (f"prt_{i}", ms + i, ms + i, json.dumps(part)))
+    con.commit()
+    con.close()
 
 
 if __name__ == "__main__":

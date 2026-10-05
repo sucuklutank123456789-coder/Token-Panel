@@ -72,7 +72,8 @@ LIGHT = Theme(
     text2="#52514e",
     muted="#7a7974",
     track="#e8e7e3",
-    series={"claude": "#eb6834", "codex": "#2a78d6"},
+    # Categorical slots 2, 1, 3 of the dataviz palette; validated together in stack order, both themes.
+    series={"claude": "#eb6834", "codex": "#2a78d6", "opencode": "#1baf7a"},
     warning="#b47800",
     critical="#c62828",
 )
@@ -85,7 +86,7 @@ DARK = Theme(
     text2="#c3c2b7",
     muted="#8f8e86",
     track="#33332f",
-    series={"claude": "#d95926", "codex": "#3987e5"},
+    series={"claude": "#d95926", "codex": "#3987e5", "opencode": "#199e70"},
     warning="#e0a43a",
     critical="#e66767",
 )
@@ -407,8 +408,49 @@ def usage_tooltip(u: Usage) -> str:
         f"New input: {fmt.full(u.input)}\n"
         f"Cache reads: {fmt.full(u.cache_read)}\n"
         f"Cache writes: {fmt.full(u.cache_write)}\n"
-        f"Output: {fmt.full(u.output)} (thinking: {fmt.full(u.reasoning)})"
+        f"Output: {fmt.full(u.output)} (thinking: {fmt.full(u.reasoning)})\n"
+        f"{cost_text(u)}"
     )
+
+
+def cost_text(u: Usage) -> str:
+    """'API cost ≈ $12.40', with a note when some tokens have no known price."""
+    text = f"API cost ≈ {fmt.money(u.cost)}"
+    if u.unpriced:
+        text += f" (+ {fmt.short(u.unpriced)} tokens of models without a known price)"
+    return text
+
+
+COST_HINT = (
+    "Estimated: what these model calls would cost at pay-as-you-go API prices, with cache reads and "
+    "writes at their own rates. Subscriptions are billed differently. Prices can be overridden in "
+    "prices.json (see the README)."
+)
+
+
+def stat_row(theme: Theme, u: Usage, metric: str) -> QHBoxLayout:
+    """Input · Output · API cost, as three small figures."""
+    inp, out = u.split(metric)
+    row = QHBoxLayout()
+    row.setContentsMargins(10, 0, 10, 0)
+    row.setSpacing(6)
+    cost = fmt.money(u.cost) + ("+" if u.unpriced else "")
+    for name, value, tip in (
+        ("Input", fmt.short(inp), f"{fmt.full(inp)} input tokens under this metric"),
+        ("Output", fmt.short(out), f"{fmt.full(out)} output tokens (thinking included)"),
+        ("API cost", cost, cost_text(u) + "\n\n" + COST_HINT),
+    ):
+        box = QFrame()
+        box.setObjectName("stat")
+        box.setStyleSheet(f"QFrame#stat {{ background: {theme.raised}; border-radius: 8px; }}")
+        box.setToolTip(tip)
+        v = QVBoxLayout(box)
+        v.setContentsMargins(10, 6, 10, 6)
+        v.setSpacing(1)
+        v.addWidget(label(name, theme.muted, 10))
+        v.addWidget(label(value, theme.text, 14, True))
+        row.addWidget(box, 1)
+    return row
 
 
 def models_text(models: dict[str, Usage], metric: str) -> str:
@@ -657,7 +699,9 @@ class Panel(QWidget):
         exact.setAlignment(Qt.AlignHCenter)
         lay.addWidget(exact)
         lay.addWidget(self._metric_button(s), 0, Qt.AlignHCenter)
-        lay.addSpacing(16)
+        lay.addSpacing(8)
+        lay.addLayout(stat_row(th, s.total, s.metric))
+        lay.addSpacing(14)
 
         # Claude / Codex share
         srcs = [(k, s.by_source.get(k, Usage())) for k in SOURCE_LABELS]
@@ -800,7 +844,8 @@ class Panel(QWidget):
                     Row(
                         th,
                         c.label,
-                        f"{models_text(c.models, s.metric)} · {n} thread{'s' if n != 1 else ''}",
+                        f"≈ {fmt.money(c.usage.cost)} · {models_text(c.models, s.metric)}"
+                        f" · {n} thread{'s' if n != 1 else ''}",
                         fmt.short(v(c.usage)),
                         [(v(c.usage), color)],
                         top,
@@ -842,7 +887,7 @@ class Panel(QWidget):
                 Row(
                     th,
                     t.title,
-                    f"{t.project} · {models} · {fmt.ago(t.last_ts)}",
+                    f"≈ {fmt.money(t.usage.cost)} · {t.project} · {models} · {fmt.ago(t.last_ts)}",
                     fmt.short(v(t.usage)),
                     [(v(t.usage), color)],
                     top,
@@ -876,13 +921,15 @@ class Panel(QWidget):
         hero.setContentsMargins(10, 8, 10, 0)
         hero.setToolTip(usage_tooltip(t.usage))
         lay.addWidget(hero)
+        lay.addSpacing(4)
+        lay.addLayout(stat_row(th, t.usage, s.metric))
 
         total = v(t.usage) or 1
         self._section(lay, "Models")
         for m, u in sorted(t.model_usage.items(), key=lambda x: -v(x[1])):
             lay.addWidget(
-                Row(th, m, fmt.percent(v(u), total), fmt.short(v(u)), [(v(u), color)], total,
-                    tooltip=usage_tooltip(u))
+                Row(th, m, f"{fmt.percent(v(u), total)} · ≈ {fmt.money(u.cost)}", fmt.short(v(u)), [(v(u), color)],
+                    total, tooltip=usage_tooltip(u))
             )
 
         self._section(lay, "Token types")

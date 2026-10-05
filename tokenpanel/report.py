@@ -11,8 +11,14 @@ def render(s: Summary, max_threads: int = 5) -> str:
     def v(u):
         return u.value(s.metric)
 
+    def cost(u):
+        text = f"≈ {fmt.money(u.cost)}"
+        return text + (f" + {fmt.short(u.unpriced)} tokens without a known price" if u.unpriced else "")
+
+    inp, outp = s.total.split(s.metric)
     out = [
         f"{RANGES[s.range_key]}: {fmt.short(v(s.total))} tokens ({fmt.full(v(s.total))}) — metric: {METRICS[s.metric]}",
+        f"  input {fmt.short(inp)} · output {fmt.short(outp)} · API cost {cost(s.total)}",
         "  " + " · ".join(f"{SOURCE_LABELS[k]} {fmt.short(v(u))}" for k, u in s.by_source.items()),
     ]
     if s.limits and s.limits.primary:
@@ -24,11 +30,16 @@ def render(s: Summary, max_threads: int = 5) -> str:
     for c in s.clients:
         models = ", ".join(f"{m} {fmt.short(v(u))}" for m, u in sorted(c.models.items(), key=lambda x: -v(x[1])))
         out.append("")
-        out.append(f"[{SOURCE_LABELS[c.source]} · {c.label}] {fmt.short(v(c.usage))}  ({models})")
+        out.append(
+            f"[{SOURCE_LABELS[c.source]} · {c.label}] {fmt.short(v(c.usage))}  {cost(c.usage)}  ({models})"
+        )
         for t in c.threads[:max_threads]:
-            out.append(f"   {fmt.short(v(t.usage)):>7}  {t.title}  — {t.project}, {fmt.ago(t.last_ts)}")
+            out.append(
+                f"   {fmt.short(v(t.usage)):>7}  {fmt.money(t.usage.cost):>8}  {t.title}  — {t.project}, "
+                f"{fmt.ago(t.last_ts)}"
+            )
             tools = sorted(t.tools.items(), key=lambda x: -v(x[1]))[:4]
-            out.append("            " + ", ".join(f"{n} {fmt.short(v(u))}" for n, u in tools))
+            out.append("                      " + ", ".join(f"{n} {fmt.short(v(u))}" for n, u in tools))
         if len(c.threads) > max_threads:
             out.append(f"   … {len(c.threads) - max_threads} more threads")
     out.append("")

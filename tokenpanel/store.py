@@ -24,6 +24,9 @@ RANGES = {
 
 NO_TOOL = "Reply (no tools)"
 
+# How often ~/.claude.json is checked for Claude Code's cached usage figures.
+OFFICIAL_CHECK_SECONDS = 60.0
+
 # The overview chart always shows this many days, whatever the selected range.
 DAILY_DAYS = 30
 
@@ -141,6 +144,7 @@ class Store:
         self.claude_json = claude_json_paths(self.claude_dirs)
         self._official_stamp: dict[str, float] = {}
         self._official: dict[str, tuple] = {}
+        self._official_checked = -1e9
         # Results that don't depend on the range or metric, computed once per data change and minute.
         self._generation = 0
         self._extras_key: tuple | None = None
@@ -170,6 +174,11 @@ class Store:
         self.limit_hits[(hit.ts, hit.kind)] = hit
 
     def _read_official(self) -> bool:
+        # Claude Code rewrites ~/.claude.json often, but refreshes its cached usage at most once a minute.
+        now = time.monotonic()
+        if now - self._official_checked < OFFICIAL_CHECK_SECONDS:
+            return False
+        self._official_checked = now
         changed = False
         for path in self.claude_json:
             try:

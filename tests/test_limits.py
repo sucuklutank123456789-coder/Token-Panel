@@ -43,6 +43,13 @@ class ParseTest(unittest.TestCase):
         hit = parse_limit_message(line("x", ts, quotaLimits={"status": "rejected", "rateLimitType": "seven_day_opus",
                                                             "resetsAt": 1790175600}), ts)
         self.assertEqual((hit.kind, hit.resets_at), ("weekly_opus", 1790175600))
+        # 2025: "Your limit will reset at 3pm".
+        hit = parse_limit_message(line("Claude usage limit reached. Your limit will reset at 3pm (UTC).", ts), ts)
+        self.assertEqual((hit.kind, hit.resets_at), ("session", ts + 2 * H))
+        # A limit type this version doesn't know is not taken for the 5-hour one.
+        hit = parse_limit_message(line("x", ts, quotaLimits={"status": "rejected", "rateLimitType": "seven_day_new",
+                                                            "resetsAt": ts + 4 * 86400}), ts)
+        self.assertEqual(hit.kind, "other")
         for text in ("API Error: Server is temporarily limiting requests (not your usage limit)",
                      "API Error: Rate limit reached", "Sure, here is the limit you asked about."):
             self.assertIsNone(parse_limit_message(line(text, ts), ts), text)
@@ -106,6 +113,13 @@ class EstimateTest(unittest.TestCase):
         self.assertEqual(week.end, reset)  # the weekly reset repeats every 7 days
         self.assertTrue(week.exact_end)
 
+    def test_no_calibration_without_usage_in_the_hit_window(self):
+        # The window was used up elsewhere (claude.ai): no logged usage before the hit, so no limit size.
+        events = [ev(NOW - 20 * 86400, 100.0), ev(NOW - H, 1.0)]
+        est = estimate(events, [LimitHit(NOW - 3 * 86400, "session")], None, NOW)
+        self.assertIsNone(est.windows[0].cap)
+        self.assertIsNone(est.windows[0].used_pct)
+
     def test_nothing_to_show(self):
         self.assertIsNone(estimate([], [], None, NOW))
 
@@ -158,6 +172,7 @@ class StoreWiringTest(unittest.TestCase):
             with open(os.path.join(claude, ".claude.json"), "w", encoding="utf-8") as fh:
                 json.dump({"cachedUsageUtilization": {"fetchedAtMs": (NOW - 60) * 1000, "utilization": {
                     "five_hour": {"utilization": 100, "resets_at": NOW + 4 * H}}}}, fh)
+            store._official_checked = -1e9  # skip the once-a-minute wait
             self.assertTrue(store.refresh())
             est = store.summarize("all", now=NOW).claude_limits
             self.assertTrue(est.partly_official)  # only the 5-hour figure is cached; the week stays estimated
@@ -168,6 +183,7 @@ class StoreWiringTest(unittest.TestCase):
             with open(os.path.join(claude, ".claude.json"), "w", encoding="utf-8") as fh:
                 json.dump({"numStartups": 3}, fh)
             os.utime(os.path.join(claude, ".claude.json"), (NOW + 5, NOW + 5))
+            store._official_checked = -1e9
             self.assertTrue(store.refresh())
             self.assertFalse(store.summarize("all", now=NOW).claude_limits.partly_official)
 

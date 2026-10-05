@@ -36,7 +36,8 @@ from PySide6.QtWidgets import (
 )
 
 from . import autostart, fmt
-from .limits import KIND_LABELS, ClaudeLimits
+from .describe import blocked_text, cost_text, limits_source, window_text
+from .limits import ClaudeLimits
 from .model import DEFAULT_METRIC, METRICS, SOURCE_LABELS, Usage
 from .paths import wsl_distros
 from .store import DAILY_DAYS, RANGES, ClientRow, DayRow, Store, Summary, ThreadRow, range_start
@@ -407,14 +408,6 @@ def usage_tooltip(u: Usage) -> str:
         f"Output: {fmt.full(u.output)} (thinking: {fmt.full(u.reasoning)})\n"
         f"{cost_text(u)}"
     )
-
-
-def cost_text(u: Usage) -> str:
-    """'API cost ≈ $12.40', with a note when some tokens have no known price."""
-    text = f"API cost ≈ {fmt.money(u.cost)}"
-    if u.unpriced:
-        text += f" (+ {fmt.short(u.unpriced)} tokens of models without a known price)"
-    return text
 
 
 COST_HINT = (
@@ -815,41 +808,15 @@ class Panel(QWidget):
             return
         th = self.theme
         self._section(lay, "Claude usage limits" + ("" if est.partly_official else " (estimate)"))
-        if est.blocked_until:
-            warn = label(
-                f"{KIND_LABELS.get(est.blocked_kind, 'Usage')} limit reached · resets {fmt.clock(est.blocked_until)}",
-                th.critical, 12, True,
-            )
+        blocked = blocked_text(est)
+        if blocked:
+            warn = label(blocked, th.critical, 12, True)
             warn.setContentsMargins(10, 0, 10, 2)
             lay.addWidget(warn)
         for w in est.windows:
-            name = KIND_LABELS.get(w.kind, w.kind)
-            if w.kind == "weekly" and not w.exact_end:
-                state = "last 7 days"
-            else:
-                state = f"resets {'' if w.exact_end else '~'}{fmt.clock(w.end)}"
-            if w.official:
-                value, tip = f"{w.used_pct:.0f}%", "Claude Code's own figure for this window."
-            elif w.used_pct is not None:
-                value = f"≈{w.used_pct:.0f}%"
-                tip = (
-                    f"{fmt.money(w.cost)} used at API prices. You reached this limit on "
-                    f"{fmt.clock(w.cap_from)} after {fmt.money(w.cap)}, so that amount is taken as the limit."
-                )
-            else:
-                value = f"{fmt.money(w.cost)} used"
-                tip = (
-                    "Used so far, at API prices. No limit has been reached in the last 30 days, so there is "
-                    "nothing to compare against yet; the percentage appears after the first one."
-                )
-            self._limit_row(lay, name, state, w.used_pct, value, tip)
-        if est.official:
-            note = f"From Claude Code, {fmt.ago(est.as_of)}"
-        elif est.partly_official:
-            note = f"From Claude Code, {fmt.ago(est.as_of)}; figures marked ≈ are estimated from this computer's logs."
-        else:
-            note = "Estimated from this computer's logs. /usage in Claude Code shows the exact figures."
-        foot = label(note, th.muted, 10)
+            t = window_text(w)
+            self._limit_row(lay, t.name, t.when, w.used_pct, t.value, t.detail)
+        foot = label(limits_source(est), th.muted, 10)
         foot.setWordWrap(True)
         foot.setContentsMargins(10, 0, 10, 0)
         lay.addWidget(foot)

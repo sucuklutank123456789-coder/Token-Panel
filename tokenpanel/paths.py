@@ -91,14 +91,14 @@ def default_opencode_dirs(include_wsl: bool = False) -> list[str]:
 
 
 def opencode_dbs(dirs: list[str]) -> list[str]:
-    """opencode.db (or opencode-<channel>.db) in each directory; OPENCODE_DB points at one file directly."""
+    """opencode.db (or opencode-<channel>.db) in each directory, plus the file OPENCODE_DB points at (an absolute
+    path, or relative to the local data directory)."""
     found = []
-    env = os.environ.get("OPENCODE_DB")
     for d in dirs:
-        if env:
-            found.append(env if os.path.isabs(env) else os.path.join(d, env))
-        else:
-            found += glob.glob(os.path.join(d, "opencode*.db"))
+        found += glob.glob(os.path.join(d, "opencode*.db"))
+    env = os.environ.get("OPENCODE_DB")
+    if env:
+        found.append(env if os.path.isabs(env) else os.path.join(default_opencode_dirs()[0], env))
     return [p for p in _unique(found) if os.path.isfile(p)]
 
 

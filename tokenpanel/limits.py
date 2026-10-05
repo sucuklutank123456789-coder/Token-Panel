@@ -37,6 +37,7 @@ KIND_LABELS = {
     "weekly_opus": "Weekly Opus",
     "weekly_sonnet": "Weekly Sonnet",
     "weekly_fable": "Weekly Fable",
+    "other": "Usage",  # a limit type this version doesn't know
 }
 _TEXT_KINDS = {
     "session limit": "session",
@@ -90,7 +91,7 @@ class ClaudeLimits:
 # --- Limit messages in transcripts -------------------------------------------------------------------------
 
 _RESET = re.compile(
-    r"resets\s+(?:(?P<mon>[A-Z][a-z]{2})\s+(?P<day>\d{1,2}),?\s+(?:at\s+)?)?"
+    r"resets?\s+(?:at\s+)?(?:(?P<mon>[A-Z][a-z]{2})\s+(?P<day>\d{1,2}),?\s+(?:at\s+)?)?"
     r"(?P<h>\d{1,2})(?::(?P<m>\d{2}))?\s*(?P<ap>am|pm)\b(?:\s*\((?P<tz>[^)]+)\))?",
     re.IGNORECASE,
 )
@@ -143,7 +144,7 @@ def parse_limit_message(d: dict, ts: float) -> LimitHit | None:
     """The synthetic transcript line Claude Code writes when a usage limit is reached, in any of its formats."""
     quota = d.get("quotaLimits")
     if isinstance(quota, dict) and quota.get("status") == "rejected":
-        kind = KINDS.get(quota.get("rateLimitType") or "", "session")
+        kind = KINDS.get(quota.get("rateLimitType") or "", "other")
         resets = quota.get("resetsAt")
         return LimitHit(ts, kind, float(resets) if isinstance(resets, (int, float)) else 0.0)
     content = (d.get("message") or {}).get("content")
@@ -156,6 +157,9 @@ def parse_limit_message(d: dict, ts: float) -> LimitHit | None:
     m = re.search(r"usage limit reached\|(\d+)", text, re.IGNORECASE)
     if m:
         return LimitHit(ts, "session", float(m.group(1)))
+    # 2025: "Claude usage limit reached. Your limit will reset at 3pm (Europe/Istanbul)."
+    if "usage limit reached" in low:
+        return LimitHit(ts, "session", parse_reset(text, ts))
     # 2025: "5-hour limit reached ∙ resets 5am", "Opus weekly limit reached ∙ resets Oct 9, 5pm".
     # 2026: "You've hit your weekly limit · resets Jun 3 at 4pm (Europe/Berlin)".
     m = re.search(r"hit your\s+([\w -]*?)\s*limit\b", low) or re.search(r"([\w-]+(?: weekly)?) limit reached", low)
@@ -187,14 +191,33 @@ def _epoch(value) -> float:
     return 0.0
 
 
+_CACHED_KEY = re.compile(r'"cachedUsageUtilization"\s*:\s*')
+
+
+def _cached_usage(text: str):
+    """The "cachedUsageUtilization" value. ~/.claude.json can be megabytes of project history, so only that object
+    is decoded when the key is found; the whole file is parsed only as a fallback."""
+    m = _CACHED_KEY.search(text)
+    if m is None:
+        return None
+    try:
+        return json.JSONDecoder().raw_decode(text, m.end())[0]
+    except ValueError:
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return None
+        return data.get("cachedUsageUtilization") if isinstance(data, dict) else None
+
+
 def read_official(path: str) -> tuple[float, dict[str, tuple[float, float]]] | None:
     """(fetched at, {kind: (used percent, resets at)}) from Claude Code's cached usage, or None."""
     try:
         with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
+            text = fh.read()
+    except (OSError, UnicodeDecodeError):
         return None
-    cached = data.get("cachedUsageUtilization") if isinstance(data, dict) else None
+    cached = _cached_usage(text)
     if not isinstance(cached, dict):
         return None
     util = cached.get("utilization")
@@ -255,11 +278,12 @@ def estimate(
         if last_session.resets_at:
             hit_start = last_session.resets_at - SESSION_SECONDS
         else:
-            hit_start = _session_start([e for e in events if e.ts <= last_session.ts], last_session.ts) or 0
-        cap = _cost(events, hit_start, last_session.ts + 1)
+            hit_start = _session_start([e for e in events if e.ts <= last_session.ts], last_session.ts)
+        # No logged usage in that window (e.g. it was used up on claude.ai): nothing to measure the limit with.
+        cap = _cost(events, hit_start, last_session.ts + 1) if hit_start is not None else 0.0
         if cap > 0:
             w.cap, w.cap_from = cap, last_session.ts
-        if last_session.resets_at > now:  # still in the window that hit the limit
+        if last_session.resets_at > now and hit_start is not None:  # still in the window that hit the limit
             w.start, w.end, w.exact_end = hit_start, last_session.resets_at, True
     if start is not None or w.exact_end:
         w.cost = _cost(events, w.start, now + 1)

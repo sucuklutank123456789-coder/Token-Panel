@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from tokenpanel import pricing
+from tokenpanel import opencode, pricing
 from tokenpanel.store import Store
 
 SCHEMA = """
@@ -145,7 +145,35 @@ class OpenCodeTest(unittest.TestCase):
         self.step("msg_1", "ses_a", 200, 20)
         s = self.summary()
         t = [c for c in s.clients if c.source == "opencode"][0].threads[0]
-        self.assertIn("gpt-5.5", t.model_usage)  # not stuck on the empty model from the first lookup
+        # The first step waited for its message row instead of being stored without a model.
+        self.assertEqual(set(t.model_usage), {"gpt-5.5"})
+        self.assertEqual(t.calls, 2)
+
+    def test_failure_mid_batch_loses_nothing(self):
+        self.session("ses_a", "One")
+        self.message("msg_1", "ses_a", "gpt-5.5")
+        self.message("msg_2", "ses_a", "gpt-5.5")
+        self.step("msg_1", "ses_a", 100, 10)
+        self.step("msg_2", "ses_a", 200, 20)
+        self.con.commit()
+        real = opencode.OpenCodeDb._message
+
+        def flaky(db, con, mid):
+            if mid == "msg_2":
+                raise sqlite3.OperationalError("database is locked")
+            return real(db, con, mid)
+
+        with mock.patch.object(opencode.OpenCodeDb, "_message", flaky):
+            self.store.refresh(discover=True)
+        self.store.refresh()
+        self.assertEqual(self.store.summarize("all").by_source["opencode"].input, 300)
+
+    def test_uri_for_windows_unc_paths(self):
+        with mock.patch.object(opencode.os.path, "abspath", lambda p: p):
+            self.assertEqual(opencode.sqlite_uri("\\\\wsl.localhost\\Ubuntu\\opencode.db"),
+                             "file:////wsl.localhost/Ubuntu/opencode.db?mode=ro")
+            self.assertEqual(opencode.sqlite_uri("C:\\Users\\a b\\opencode.db"),
+                             "file:C:/Users/a%20b/opencode.db?mode=ro")
 
     def test_unreadable_or_missing_database(self):
         with open(os.path.join(self.dir, "opencode-beta.db"), "wb") as fh:

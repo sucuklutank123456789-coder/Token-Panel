@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 from urllib.parse import quote
 
 from .model import Event, Usage
@@ -18,6 +19,9 @@ from .parsers import Sink, _short
 from .pricing import lookup, price_usage
 
 CLIENT = "opencode"
+# Part ids sort by creation time. Several OpenCode processes can write at once, so a row with a slightly older
+# id can be committed after a newer one was read; each round re-reads the ids of the last minute to catch them.
+OVERLAP_SECONDS = 60
 
 
 def _load(raw) -> dict:
@@ -33,20 +37,29 @@ def _num(d: dict, key: str) -> int:
     return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
 
 
+def sqlite_uri(path: str) -> str:
+    """A read-only file: URI. Windows UNC paths (\\\\wsl.localhost\\...) need an empty authority: file:////host/..."""
+    p = os.path.abspath(path).replace("\\", "/")
+    prefix = "file://" if p.startswith("//") else "file:"
+    return prefix + quote(p, safe="/:") + "?mode=ro"
+
+
 class OpenCodeDb:
-    """One opencode*.db file, read incrementally by row update time."""
+    """One opencode*.db file, read incrementally."""
 
     def __init__(self, path: str):
         self.path = path
-        self.offset = 0  # kept for Store.refresh's change check; counts rows read
+        self.offset = 0  # grows when something new was read; Store.refresh compares it
         self.stamp: tuple | None = None
-        self.part_seen = 0  # largest part.time_updated read so far
-        self.session_seen = 0
+        self.read_from = ""  # part ids at or above this are (re)read next round
+        self.history: list[tuple[float, str]] = []  # (when, largest part id seen then)
+        self.sessions: dict[str, tuple] = {}  # session id -> (parent, directory, title)
         self.messages: dict[str, tuple[str, str, str]] = {}  # message id -> (model, variant, cwd)
         self.pending_tools: dict[str, list[tuple[str, str]]] = {}  # message id -> [(part id, tool)]
         self.tool_parts: set[str] = set()
+        self.step_parts: set[str] = set()
         self.steps: dict[str, list[tuple[str, Event]]] = {}  # message id -> [(step part id, its event)]
-        self.roots: dict[str, str] = {}  # session id -> parent session id (subagents)
+        self.waiting: set[str] = set()  # step parts whose message row wasn't visible yet
 
     def changed(self, st: os.stat_result) -> bool:
         # Writes land in the -wal file first; the main file can stay untouched for a long time.
@@ -62,10 +75,9 @@ class OpenCodeDb:
         return True
 
     def _connect(self) -> sqlite3.Connection | None:
-        # Read-only, so the panel can never change OpenCode's data. "C:/x" is a valid URI path on Windows.
-        uri = "file:" + quote(os.path.abspath(self.path).replace("\\", "/"), safe="/:") + "?mode=ro"
+        # Read-only, so the panel can never change OpenCode's data.
         try:
-            con = sqlite3.connect(uri, uri=True, timeout=2)
+            con = sqlite3.connect(sqlite_uri(self.path), uri=True, timeout=2)
         except sqlite3.Error:
             return None
         try:
@@ -84,26 +96,24 @@ class OpenCodeDb:
             self._sessions(con, sink)
             self._parts(con, sink)
         except sqlite3.Error:
-            # Busy, or a schema this version doesn't know: try again next round. Rows read so far are kept, and
-            # re-reading them is harmless.
+            # Busy, or a schema this version doesn't know: try again next round. The read position only moves
+            # after a whole batch went through, and re-reading is harmless.
             self.stamp = None
         finally:
             con.close()
+        if self.waiting:
+            self.stamp = None  # some steps wait for their message row; look again next round
 
     def _sessions(self, con: sqlite3.Connection, sink: Sink) -> None:
-        # ">=": a row written in the same millisecond as the last one read is not lost; reading twice is harmless.
-        rows = con.execute(
-            "SELECT id, parent_id, directory, title, time_updated FROM session"
-            " WHERE time_updated >= ? ORDER BY time_updated",
-            (self.session_seen,),
-        ).fetchall()
-        for sid, parent, directory, title, updated in rows:
-            self.session_seen = max(self.session_seen, updated or 0)
+        # The session table is small; read it whole and pick out what changed (titles arrive later).
+        for sid, parent, directory, title in con.execute("SELECT id, parent_id, directory, title FROM session"):
+            row = (parent, directory, title)
+            if self.sessions.get(sid) == row:
+                continue
+            self.sessions[sid] = row
             self.offset += 1
             if parent:
-                # A subagent's usage belongs to the conversation that started it.
-                self.roots[sid] = parent
-                continue
+                continue  # a subagent: its usage belongs to the conversation that started it
             t = sink.thread("opencode", sid)
             if directory:
                 t.cwd = directory
@@ -112,33 +122,49 @@ class OpenCodeDb:
 
     def _root(self, sid: str) -> str:
         seen = set()
-        while sid in self.roots and sid not in seen:
+        while sid in self.sessions and self.sessions[sid][0] and sid not in seen:
             seen.add(sid)
-            sid = self.roots[sid]
+            sid = self.sessions[sid][0]
         return sid
 
     def _parts(self, con: sqlite3.Connection, sink: Sink) -> None:
-        # Only the parts the panel uses; text and tool output parts can be large.
+        # Only the parts the panel uses; text and tool output parts can be large. "id > ?" walks the primary key.
         rows = con.execute(
-            "SELECT id, message_id, session_id, time_created, time_updated, data FROM part"
-            " WHERE time_updated >= ? AND json_extract(data, '$.type') IN ('step-finish', 'tool')"
-            " ORDER BY time_updated, id",
-            (self.part_seen,),
+            "SELECT id, message_id, session_id, time_created, data FROM part"
+            " WHERE id >= ? AND json_extract(data, '$.type') IN ('step-finish', 'tool') ORDER BY id",
+            (self.read_from,),
         ).fetchall()
-        # Rows come in update order, but a tool part can be updated after its step finished (when OpenCode
-        # prunes old tool output). Part ids sort by creation, so handle each batch in creation order.
-        rows.sort(key=lambda r: r[0])
-        for pid, mid, sid, created, updated, pdata in rows:
-            self.part_seen = max(self.part_seen, updated or 0)
-            self.offset += 1
+        if self.waiting:
+            marks = ",".join("?" * len(self.waiting))
+            rows += con.execute(
+                f"SELECT id, message_id, session_id, time_created, data FROM part WHERE id IN ({marks})",
+                sorted(self.waiting),
+            ).fetchall()
+            rows.sort(key=lambda r: r[0])
+        for pid, mid, sid, created, pdata in rows:
             part = _load(pdata)
             kind = part.get("type")
-            if kind == "tool":
-                if pid not in self.tool_parts:
-                    self.tool_parts.add(pid)
-                    self._tool(mid, pid, part.get("tool") or "tool")
-            elif kind == "step-finish":
-                self._step(pid, mid, sid, created, part, self._message(con, mid), sink)
+            if kind == "tool" and pid not in self.tool_parts:
+                self.tool_parts.add(pid)
+                self.offset += 1
+                self._tool(mid, pid, part.get("tool") or "tool")
+            elif kind == "step-finish" and pid not in self.step_parts:
+                msg = self._message(con, mid)
+                if msg is None:
+                    self.waiting.add(pid)
+                    continue
+                self.waiting.discard(pid)
+                self.step_parts.add(pid)
+                self.offset += 1
+                self._step(pid, mid, sid, created, part, msg, sink)
+        # The whole batch went through: move the read position, keeping the last minute.
+        now = time.monotonic()
+        if rows:
+            self.history.append((now, max(self.read_from, rows[-1][0])))
+        older = [mark for when, mark in self.history if when <= now - OVERLAP_SECONDS]
+        if older:
+            self.read_from = older[-1]
+            self.history = [(w, m) for w, m in self.history if w > now - OVERLAP_SECONDS]
 
     def _tool(self, mid: str, pid: str, name: str) -> None:
         # Seen only now, but its step may already be counted (read in an earlier round): add it there.
@@ -148,12 +174,12 @@ class OpenCodeDb:
         else:
             self.pending_tools.setdefault(mid, []).append((pid, name))
 
-    def _message(self, con: sqlite3.Connection, mid: str) -> tuple[str, str, str]:
+    def _message(self, con: sqlite3.Connection, mid: str) -> tuple[str, str, str] | None:
         msg = self.messages.get(mid)
         if msg is None:
             row = con.execute("SELECT data FROM message WHERE id = ?", (mid,)).fetchone()
             if row is None:
-                return "", "", ""  # not visible yet; don't remember that
+                return None  # not visible yet
             d = _load(row[0])
             path = d.get("path") if isinstance(d.get("path"), dict) else {}
             msg = self.messages[mid] = (d.get("modelID") or "", d.get("variant") or "", path.get("cwd") or "")

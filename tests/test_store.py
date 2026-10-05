@@ -356,6 +356,17 @@ class PathsTest(unittest.TestCase):
             self.assertIn(os.path.join(home, ".claude.json"), found)
             self.assertIn(os.path.join(os.path.realpath(real), ".claude.json"), found)
 
+    def test_opencode_db_env_adds_a_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b = os.path.join(d, "a"), os.path.join(d, "b")
+            os.makedirs(a)
+            os.makedirs(b)
+            for p in (os.path.join(a, "opencode.db"), os.path.join(b, "custom.db")):
+                open(p, "w").close()
+            with mock.patch.dict(os.environ, {"OPENCODE_DB": os.path.join(b, "custom.db")}):
+                found = paths.opencode_dbs([a])
+            self.assertEqual(sorted(os.path.basename(p) for p in found), ["custom.db", "opencode.db"])
+
     def test_default_dirs(self):
         with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home}):
             os.environ.pop("CLAUDE_CONFIG_DIR", None)

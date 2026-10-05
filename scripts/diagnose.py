@@ -141,10 +141,4 @@ if os.path.exists(p):
         print("\nstats-cache.json could not be read")
 else:
     print("\nno stats-cache.json")
-
-sp = base + "/settings.json"
-try:
-    print("cleanupPeriodDays:", json.load(open(sp)).get("cleanupPeriodDays", "not set (default 30 days)"))
-except (OSError, ValueError):
-    print("cleanupPeriodDays: no settings.json (default 30 days)")
 sys.exit(0)

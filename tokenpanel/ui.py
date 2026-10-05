@@ -159,7 +159,7 @@ class Worker(QObject):
     @Slot()
     def refresh_now(self):
         if self.store is not None:
-            self.store.refresh()
+            self.store.refresh(discover=True)
             self._emit()
 
     def _emit(self):

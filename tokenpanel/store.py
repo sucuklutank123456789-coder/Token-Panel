@@ -7,7 +7,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from .model import DEFAULT_METRIC, SOURCE_LABELS, CodexLimits, Event, ThreadInfo, Usage, client_label
 from .parsers import ClaudeFile, CodexFile, JsonlFile
@@ -21,6 +21,9 @@ RANGES = {
 }
 
 NO_TOOL = "Reply (no tools)"
+
+# The overview chart always shows this many days, whatever the selected range.
+DAILY_DAYS = 30
 
 # Walking the log directories for new files is the expensive part, so it runs at most this often.
 # In between, refresh() only stats the files it already knows.
@@ -87,6 +90,19 @@ class ClientRow:
 
 
 @dataclass
+class DayRow:
+    day: date
+    by_source: dict[str, Usage]
+
+    @property
+    def total(self) -> Usage:
+        u = Usage()
+        for x in self.by_source.values():
+            u.add(x)
+        return u
+
+
+@dataclass
 class Summary:
     range_key: str
     metric: str
@@ -96,6 +112,7 @@ class Summary:
     limits: CodexLimits | None
     file_count: int
     generated_at: float
+    daily: list[DayRow] = field(default_factory=list)  # oldest first, the last DAILY_DAYS days
 
 
 class Store:
@@ -213,8 +230,16 @@ class Store:
         by_source: dict[str, Usage] = {s: Usage() for s in SOURCE_LABELS}
         clients: dict[tuple[str, str], ClientRow] = {}
         threads: dict[tuple[str, str, str], ThreadRow] = {}
+        today = datetime.fromtimestamp(time.time() if now is None else now).date()
+        days = [today - timedelta(days=i) for i in range(DAILY_DAYS - 1, -1, -1)]
+        daily = {d: DayRow(d, {s: Usage() for s in SOURCE_LABELS}) for d in days}
+        daily_start = datetime.combine(days[0], datetime.min.time()).timestamp()
 
         for ev in self.events.values():
+            if ev.ts >= daily_start:
+                row = daily.get(datetime.fromtimestamp(ev.ts).date())
+                if row is not None:
+                    row.by_source.setdefault(ev.source, Usage()).add(ev.usage)
             if ev.ts < start:
                 continue
             u = ev.usage
@@ -269,4 +294,5 @@ class Store:
             limits=self.limits,
             file_count=len(self.files),
             generated_at=time.time(),
+            daily=list(daily.values()),
         )

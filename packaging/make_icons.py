@@ -36,7 +36,7 @@ def write_ico(renderer: QSvgRenderer, out: str) -> None:
     header = struct.pack("<HHH", 0, 1, len(images))
     offset = len(header) + 16 * len(images)
     entries, blobs = b"", b""
-    for size, data in zip(SIZES, images):
+    for size, data in zip(SIZES, images, strict=True):
         dim = 0 if size >= 256 else size  # 0 means 256 in the ICO format
         entries += struct.pack("<BBBBHHII", dim, dim, 0, 0, 1, 32, len(data), offset)
         offset += len(data)

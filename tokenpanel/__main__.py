@@ -9,7 +9,6 @@ from .model import DEFAULT_METRIC, METRICS
 from .paths import default_claude_dirs, default_codex_dirs
 from .store import RANGES, Store
 
-
 # Stand-ins for characters a legacy console code page may lack.
 _FALLBACK = {"—": "-", "…": "...", "‹": "<", "›": ">", "·": "|"}
 
@@ -99,7 +98,9 @@ def _windows_console() -> None:
 def main(argv: list[str] | None = None) -> int:
     _windows_console()
     ap = argparse.ArgumentParser(prog="tokenpanel", description="Tray panel for Claude Code and Codex token usage")
-    ap.add_argument("--dump", action="store_true", help="Print the summary to the terminal instead of opening the panel")
+    ap.add_argument(
+        "--dump", action="store_true", help="Print the summary to the terminal instead of opening the panel"
+    )
     ap.add_argument("--range", choices=list(RANGES), default="all", help="Time range for --dump")
     ap.add_argument(
         "--metric",

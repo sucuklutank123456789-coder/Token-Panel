@@ -1,16 +1,14 @@
 import json
 import os
-import tempfile
-import unittest
-
-from unittest import mock
-
 import plistlib
 import sys
+import tempfile
+import unittest
+from unittest import mock
 
 from tokenpanel import autostart, paths
-from tokenpanel.__main__ import console_encoding
 from tokenpanel import store as store_mod
+from tokenpanel.__main__ import console_encoding
 from tokenpanel.store import Store, project_name
 
 
@@ -129,9 +127,10 @@ class StoreTest(unittest.TestCase):
             codex_meta("t1", "zed"),
             {"type": "response_item", "payload": {"type": "message", "role": "user",
                                                   "content": [{"type": "input_text", "text": "<env>x</env>"}]}},
-            {"type": "response_item", "payload": {"type": "message", "role": "user",
-                                                  "content": [{"type": "input_text",
-                                                               "text": "# Context from my IDE setup:\n\n## My request:\nselam\n"}]}},
+            {"type": "response_item", "payload": {
+                "type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": "# Context from my IDE setup:\n\n## My request:\nselam\n"}],
+            }},
             codex_turn("u1", "gpt-5.5", "high"),
             codex_call("exec_command"),
             codex_call("apply_patch"),
@@ -233,7 +232,8 @@ class StoreTest(unittest.TestCase):
     def test_several_codex_dirs(self):
         # e.g. Windows plus a WSL distribution; the same thread in both is counted once.
         other = os.path.join(self.tmp.name, "codex-wsl")
-        rows = [codex_meta("t1", "codex-tui"), codex_turn("u1", "gpt-5.5", "high"), codex_record("r1", "u1", 100, 0, 10)]
+        rows = [codex_meta("t1", "codex-tui"), codex_turn("u1", "gpt-5.5", "high"),
+                codex_record("r1", "u1", 100, 0, 10)]
         write_jsonl(os.path.join(self.codex, "sessions", "2026", "10", "04", "rollout-a.jsonl"), rows)
         write_jsonl(os.path.join(other, "sessions", "2026", "10", "04", "rollout-a.jsonl"), rows)
         write_jsonl(os.path.join(other, "sessions", "2026", "10", "04", "rollout-b.jsonl"),
@@ -246,6 +246,37 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(s.total.total, 110 + 55)
         titles = {t.title for c in s.clients for t in c.threads}
         self.assertIn("From WSL", titles)
+
+    def test_daily_last_30_days(self):
+        from datetime import datetime, timedelta
+
+        now = datetime(2026, 10, 4, 12, 0).timestamp()
+
+        def ts(days_ago, hour=10):
+            return (datetime(2026, 10, 4, hour) - timedelta(days=days_ago)).astimezone().isoformat()
+
+        p = os.path.join(self.claude, "projects", "x", "s.jsonl")
+        write_jsonl(p, [
+            claude_msg("m1", "r1", "s", "cli", ts=ts(0), output_tokens=5),
+            claude_msg("m2", "r2", "s", "cli", ts=ts(0, 1), output_tokens=7),
+            claude_msg("m3", "r3", "s", "cli", ts=ts(29), output_tokens=3),
+            claude_msg("m4", "r4", "s", "cli", ts=ts(30), output_tokens=100),  # 31st day back: left out
+        ])
+        write_jsonl(os.path.join(self.codex, "sessions", "2026", "10", "02", "rollout-d.jsonl"), [
+            codex_meta("td", "codex-tui"), codex_turn("u1", "gpt-5.5", "high"),
+            dict(codex_record("rd", "u1", 40, 0, 2), timestamp=ts(2)),
+        ])
+        self.store.refresh()
+        # The daily rows ignore the selected range.
+        s = self.store.summarize("today", now=now)
+        self.assertEqual(len(s.daily), store_mod.DAILY_DAYS)
+        self.assertEqual(s.daily[-1].day.isoformat(), "2026-10-04")
+        self.assertEqual(s.daily[0].day.isoformat(), "2026-09-05")
+        self.assertEqual(s.daily[-1].by_source["claude"].total, 12)
+        self.assertEqual(s.daily[-3].by_source["codex"].total, 42)
+        self.assertEqual(s.daily[0].total.total, 3)
+        self.assertEqual(sum(d.total.total for d in s.daily), 12 + 42 + 3)
+        self.assertEqual(s.total.total, 12)
 
     def test_new_files_found_once_a_minute_known_files_every_tick(self):
         d = os.path.join(self.claude, "projects", "x")

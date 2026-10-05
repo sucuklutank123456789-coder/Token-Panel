@@ -8,7 +8,8 @@ It never talks to an API; it reads the session logs both tools write to your com
 The panel opens layer by layer:
 
 1. **Overview** — total tokens for the selected range (Today / 7d / 30d / All), the Claude Code vs Codex
-   share, and Codex's 5-hour and weekly rate limits.
+   share, a daily chart of the last 30 days, and Codex's 5-hour and weekly rate limits. Hover a column for its
+   numbers; click the chart for the same days as a table. Days outside the selected range are drawn faded.
 2. **Details** — per-tool breakdown by client: CLI, Desktop, VS Code extension, ACP (Zed);
    the models used and the number of threads for each.
 3. **Threads** — the threads of the selected client: title, project, models, last activity.
@@ -161,6 +162,7 @@ with the Claude app.
 
 ```bash
 python -m unittest discover -s tests -t .
+ruff check .        # lint; the Build workflow runs it too
 ```
 
 Windows build (on Windows, with PySide6 and PyInstaller installed):

@@ -83,13 +83,13 @@ class Usage:
             return self.input + self.cache_write + self.output
         return self.input + self.output
 
-    def scaled(self, f: float) -> "Usage":
+    def scaled(self, f: float) -> Usage:
         return Usage(
             self.input * f, self.cache_read * f, self.cache_write * f, self.output * f, self.reasoning * f,
             self.app_io * f,
         )
 
-    def add(self, other: "Usage") -> None:
+    def add(self, other: Usage) -> None:
         self.input += other.input
         self.cache_read += other.cache_read
         self.cache_write += other.cache_write
@@ -97,7 +97,7 @@ class Usage:
         self.reasoning += other.reasoning
         self.app_io += other.app_io
 
-    def merge_max(self, other: "Usage") -> None:
+    def merge_max(self, other: Usage) -> None:
         self.input = max(self.input, other.input)
         self.cache_read = max(self.cache_read, other.cache_read)
         self.cache_write = max(self.cache_write, other.cache_write)

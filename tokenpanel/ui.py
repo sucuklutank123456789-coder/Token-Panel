@@ -1,8 +1,9 @@
 """System tray app — PySide6.
 
 Levels:
-  0  Overview : total tokens, Claude/Codex share, Codex rate limits
+  0  Overview : total tokens, Claude/Codex share, daily chart of the last 30 days, Codex rate limits
   1  Clients  : Claude/Codex × CLI/Desktop/VS Code/ACP, models used
+     (or, from the chart, the daily table)
   2  Threads  : threads of the selected client
   3  Thread   : breakdown by model, token type and "spent on"
 """
@@ -10,11 +11,13 @@ Levels:
 from __future__ import annotations
 
 import getpass
+import math
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 
-from PySide6.QtCore import QMetaObject, QObject, QPoint, QRect, QSettings, QSize, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QMetaObject, QObject, QPoint, QRect, QSettings, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QColor, QCursor, QFont, QGuiApplication, QIcon, QPainter, QPainterPath, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
@@ -27,8 +30,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QStackedWidget,
     QSystemTrayIcon,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -36,13 +39,13 @@ from PySide6.QtWidgets import (
 from . import autostart, fmt
 from .model import DEFAULT_METRIC, METRICS, SOURCE_LABELS, Usage
 from .paths import wsl_distros
-from .store import RANGES, ClientRow, Store, Summary, ThreadRow
+from .store import DAILY_DAYS, RANGES, ClientRow, DayRow, Store, Summary, ThreadRow, range_start
 
 REFRESH_MS = 5000
 MAC = sys.platform == "darwin"
 
 
-# --- Tema -----------------------------------------------------------------------
+# --- Theme ------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -223,6 +226,127 @@ class Dot(QWidget):
         p.end()
 
 
+def nice_tick(peak: float) -> float:
+    """The largest round number (1, 2 or 5 × 10^n) not above peak, for the chart's one gridline."""
+    if peak <= 0:
+        return 0.0
+    mag = 10 ** math.floor(math.log10(peak))
+    return max(m * mag for m in (1, 2, 5, 10) if m * mag <= peak)
+
+
+class DailyChart(QWidget):
+    """Stacked columns, one per day, Claude Code below Codex.
+
+    Days outside the selected range are drawn faded, so the chart shows where that range sits. Hovering a
+    column shows its numbers; clicking opens the daily table (the chart's table view).
+    """
+
+    PLOT_H, AXIS_H, TOP_PAD = 96, 16, 14
+
+    def __init__(self, theme: Theme, days: list[DayRow], metric: str, range_from: float, on_click=None):
+        super().__init__()
+        # Not "self.metric": that would shadow QWidget.metric(), which QPainter calls, and crash.
+        self.theme, self.days, self.metric_key, self.on_click = theme, days, metric, on_click
+        self.range_from = range_from
+        self.hover = -1
+        self.setFixedHeight(self.TOP_PAD + self.PLOT_H + self.AXIS_H)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMouseTracking(True)
+        if on_click:
+            self.setCursor(Qt.PointingHandCursor)
+
+    def _values(self, d) -> list[tuple[str, float]]:
+        return [(k, d.by_source.get(k, Usage()).value(self.metric_key)) for k in SOURCE_LABELS]
+
+    def _slot(self) -> float:
+        return self.width() / max(len(self.days), 1)
+
+    def paintEvent(self, _):
+        th = self.theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        font = p.font()
+        font.setPixelSize(10)
+        p.setFont(font)
+        w = self.width()
+        base = self.TOP_PAD + self.PLOT_H
+        peak = max((sum(v for _, v in self._values(d)) for d in self.days), default=0)
+        scale = self.PLOT_H / (peak * 1.08) if peak > 0 else 0
+
+        # One hairline gridline at a round value, labelled; the baseline below.
+        tick = nice_tick(peak)
+        tick_y = round(base - tick * scale)
+        if tick:
+            p.fillRect(QRect(0, tick_y, w, 1), QColor(th.border))
+        p.fillRect(QRect(0, base, w, 1), QColor(th.border))
+
+        slot = self._slot()
+        bw = min(24.0, slot - 2)
+        radius = min(3.0, bw / 2)
+        for i, d in enumerate(self.days):
+            x = i * slot + (slot - bw) / 2
+            if i == self.hover:
+                band = QPainterPath()
+                band.addRoundedRect(i * slot, self.TOP_PAD - 4, slot, self.PLOT_H + 4, 4, 4)
+                p.fillPath(band, QColor(th.hover))
+            in_range = datetime.combine(d.day, datetime.min.time()).timestamp() + 86400 > self.range_from
+            p.setOpacity(1.0 if in_range else 0.35)
+            segs = [(k, v * scale) for k, v in self._values(d) if v > 0]
+            y = float(base)
+            for j, (k, h) in enumerate(segs):
+                top = j == len(segs) - 1
+                h_draw = max(h - (0 if top else 2), 1.0)  # 2px surface gap between stacked segments
+                path = QPainterPath()
+                if top:
+                    path.addRoundedRect(x, y - h_draw, bw, h_draw, radius, radius)
+                    square = QPainterPath()
+                    square.addRect(x, y - min(h_draw, radius), bw, min(h_draw, radius))
+                    path = path.united(square)  # square at the baseline end
+                else:
+                    path.addRect(x, y - h_draw, bw, h_draw)
+                p.fillPath(path, QColor(th.series.get(k, th.muted)))
+                y -= h
+            p.setOpacity(1.0)
+
+        # Labels go on top of the columns, on a surface-colored backing so a tall column can't hide them.
+        p.setPen(QColor(th.muted))
+        if tick:
+            text = fmt.short(tick)
+            box = QRect(0, tick_y - 13, p.fontMetrics().horizontalAdvance(text) + 6, 12)
+            p.fillRect(box, QColor(th.surface))
+            p.drawText(box, Qt.AlignLeft | Qt.AlignBottom, text)
+        if self.days:
+            first = self.days[0].day
+            p.drawText(QRect(0, base + 3, 120, 12), Qt.AlignLeft | Qt.AlignTop, f"{first:%b} {first.day}")
+            p.drawText(QRect(w - 120, base + 3, 120, 12), Qt.AlignRight | Qt.AlignTop, "Today")
+        p.end()
+
+    def _index_at(self, x: float) -> int:
+        i = int(x // self._slot()) if self.width() else -1
+        return i if 0 <= i < len(self.days) else -1
+
+    def mouseMoveEvent(self, e):
+        i = self._index_at(e.position().x())
+        if i != self.hover:
+            self.hover = i
+            self.update()
+        if i >= 0:
+            d = self.days[i]
+            vals = self._values(d)
+            lines = [f"{d.day:%a, %b} {d.day.day}"]
+            lines += [f"{SOURCE_LABELS[k]}: {fmt.short(v)}" for k, v in vals]
+            lines.append(f"Total: {fmt.short(sum(v for _, v in vals))}")
+            QToolTip.showText(e.globalPosition().toPoint(), "\n".join(lines), self)
+
+    def leaveEvent(self, _):
+        self.hover = -1
+        self.update()
+
+    def mouseReleaseEvent(self, e):
+        if self.on_click and e.button() == Qt.LeftButton:
+            self.on_click()
+
+
 def label(text: str, color: str, size: int = 13, bold: bool = False, elide: bool = False) -> QLabel:
     lb = QLabel(text)
     f = lb.font()
@@ -291,7 +415,7 @@ def models_text(models: dict[str, Usage], metric: str) -> str:
     return ", ".join(m for m, _ in sorted(models.items(), key=lambda x: -x[1].value(metric)))
 
 
-# --- Ana pencere -----------------------------------------------------------------
+# --- Main window ------------------------------------------------------------------
 
 
 class Panel(QWidget):
@@ -314,12 +438,13 @@ class Panel(QWidget):
         self.level = 0
         self.sel_client: tuple[str, str] | None = None
         self.sel_thread: str | None = None
+        self.daily_view = False  # level 1 shows the daily table instead of the clients
         self.hidden_at = 0.0
         # Pages are rebuilt on every refresh; the menu is a persistent object owned by the panel.
         self._metric_menu = QMenu(self)
         self._build()
 
-    # Kurulum
+    # Setup
     def _build(self):
         th = self.theme
         self.frame = QFrame(self)
@@ -366,7 +491,8 @@ class Panel(QWidget):
         self.back = QPushButton("‹ Back")
         self.back.setCursor(Qt.PointingHandCursor)
         self.back.setStyleSheet(
-            f"QPushButton {{ color: {th.text2}; background: transparent; border: none; font-size: 12px; padding: 2px 0; }}"
+            f"QPushButton {{ color: {th.text2}; background: transparent; border: none; font-size: 12px;"
+            f" padding: 2px 0; }}"
             f"QPushButton:hover {{ color: {th.text}; }}"
         )
         self.back.clicked.connect(self.go_back)
@@ -383,7 +509,7 @@ class Panel(QWidget):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         root.addWidget(self.scroll, 1)
 
-        # Alt bilgi
+        # Footer
         foot = QHBoxLayout()
         self.status = label("Reading logs…", th.muted, 11)
         foot.addWidget(self.status, 1)
@@ -398,7 +524,7 @@ class Panel(QWidget):
         root.addLayout(foot)
         self.render()
 
-    # Olaylar
+    # Events
     def _set_range(self, key):
         self.range_key = key
         self.range_changed.emit(key)
@@ -436,14 +562,23 @@ class Panel(QWidget):
 
     def open(self, level: int, client=None, thread=None):
         self.level = level
+        if level == 1:
+            self.daily_view = False
         if client is not None:
             self.sel_client = client
         if thread is not None:
             self.sel_thread = thread
         self.render(reset_scroll=True)
 
+    def open_daily(self):
+        self.level = 1
+        self.daily_view = True
+        self.render(reset_scroll=True)
+
     def go_back(self):
         self.level = max(0, self.level - 1)
+        if self.level == 0:
+            self.daily_view = False
         self.render(reset_scroll=True)
 
     # Rendering
@@ -465,9 +600,10 @@ class Panel(QWidget):
             if self.level >= 3 and thread is None:
                 self.level = 2
             self.crumb_row.setVisible(self.level > 0)
-            [self._page_summary, self._page_clients, self._page_threads, self._page_thread][self.level](
-                lay, s, client, thread
-            )
+            pages = [self._page_summary, self._page_clients, self._page_threads, self._page_thread]
+            if self.daily_view and self.level == 1:
+                pages[1] = self._page_daily
+            pages[self.level](lay, s, client, thread)
             self.status.setText(
                 f"Updated {fmt.clock(s.generated_at)} · {s.file_count} log files"
             )
@@ -505,7 +641,7 @@ class Panel(QWidget):
             h.addWidget(label(value, self.theme.text2, 11, True))
         lay.addLayout(h)
 
-    # Seviye 0
+    # Level 0: overview
     def _page_summary(self, lay, s: Summary, *_):
         th = self.theme
         lay.addSpacing(14)
@@ -557,6 +693,14 @@ class Panel(QWidget):
             note.setContentsMargins(10, 6, 10, 0)
             note.setWordWrap(True)
             lay.addWidget(note)
+
+        if s.daily:
+            self._section(lay, f"Daily · last {DAILY_DAYS} days")
+            chart = DailyChart(th, s.daily, s.metric, range_start(s.range_key), on_click=self.open_daily)
+            box = QHBoxLayout()
+            box.setContentsMargins(10, 2, 10, 0)
+            box.addWidget(chart)
+            lay.addLayout(box)
 
         self._limits(lay, s)
 
@@ -635,7 +779,7 @@ class Panel(QWidget):
         age.setContentsMargins(10, 0, 10, 0)
         lay.addWidget(age)
 
-    # Seviye 1
+    # Level 1: clients
     def _page_clients(self, lay, s: Summary, *_):
         th = self.theme
         self.crumb.setText("Clients")
@@ -665,7 +809,26 @@ class Panel(QWidget):
                     )
                 )
 
-    # Seviye 2
+    # Level 1, from the chart: the daily table
+    def _page_daily(self, lay, s: Summary, *_):
+        th = self.theme
+        self.crumb.setText(f"Daily · last {DAILY_DAYS} days")
+        v = self.v
+        peak = max((v(d.total) for d in s.daily), default=0) or 1
+        today = s.daily[-1].day if s.daily else None
+        for d in reversed(s.daily):
+            parts = [(k, d.by_source.get(k, Usage())) for k in SOURCE_LABELS]
+            title = f"{d.day:%a, %b} {d.day.day}" + (" · today" if d.day == today else "")
+            sub = " · ".join(f"{SOURCE_LABELS[k]} {fmt.short(v(u))}" for k, u in parts)
+            lay.addWidget(
+                Row(th, title, sub, fmt.short(v(d.total)), [(v(u), th.series[k]) for k, u in parts], peak,
+                    tooltip=usage_tooltip(d.total))
+            )
+        note = label("Days follow this computer's local time.", th.muted, 10)
+        note.setContentsMargins(10, 4, 10, 0)
+        lay.addWidget(note)
+
+    # Level 2: threads of one client
     def _page_threads(self, lay, s, c: ClientRow, _):
         th = self.theme
         self.crumb.setText(f"{SOURCE_LABELS[c.source]} · {c.label}")
@@ -688,7 +851,7 @@ class Panel(QWidget):
                 )
             )
 
-    # Seviye 3
+    # Level 3: one thread
     def _page_thread(self, lay, s, c: ClientRow, t: ThreadRow):
         th = self.theme
         color = th.series[t.source]
@@ -724,9 +887,8 @@ class Panel(QWidget):
 
         self._section(lay, "Token types")
         u = t.usage
-        included = {"app": {"input", "output"}, "io": {"input", "output"}, "new": {"input", "output", "cache_write"}}.get(
-            s.metric, {"input", "output", "cache_write", "cache_read"}
-        )
+        counted = {"app": {"input", "output"}, "io": {"input", "output"}, "new": {"input", "output", "cache_write"}}
+        included = counted.get(s.metric, {"input", "output", "cache_write", "cache_read"})
         kinds = [
             ("input", "New input", u.input),
             ("output", "Output", u.output),
@@ -774,7 +936,7 @@ class Panel(QWidget):
         self.move(QPoint(x, y))
 
 
-# --- Tray simgesi ------------------------------------------------------------------
+# --- Tray icon --------------------------------------------------------------------
 
 
 def make_icon(color: str = "#2a78d6") -> QIcon:
@@ -980,6 +1142,9 @@ class SelfTest(QObject):
         try:
             p = self.main.panel
             p.grab()
+            p.open_daily()
+            p.grab()
+            p.go_back()
             p.open(1)
             p.grab()
             levels = 2
@@ -992,7 +1157,8 @@ class SelfTest(QObject):
                     p.open(3, thread=c.threads[0].thread_id)
                     p.grab()
                     levels += 1
-            self.finish(0, f"self-test ok: {levels} levels, {current.file_count} files, platform {self.app.platformName()}")
+            platform = self.app.platformName()
+            self.finish(0, f"self-test ok: {levels} levels, {current.file_count} files, platform {platform}")
         except Exception as e:  # report instead of letting Qt swallow it
             self.finish(2, f"self-test failed: {e!r}")
 

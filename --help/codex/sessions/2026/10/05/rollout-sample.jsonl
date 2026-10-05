@@ -1,6 +1,0 @@
-{"timestamp": "2026-10-05T14:54:22.000Z", "type": "session_meta", "payload": {"id": "codex-sample", "originator": "Codex Desktop", "cwd": "C:\\Users\\sample\\token-panel"}}
-{"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Sample Codex thread: Yan\u0131tla \u00e7iz"}]}}
-{"type": "turn_context", "payload": {"turn_id": "u1", "model": "gpt-5.5", "effort": "high"}}
-{"type": "response_item", "payload": {"type": "function_call", "name": "shell"}}
-{"timestamp": "2026-10-05T14:54:22.000Z", "type": "token_usage_record", "payload": {"response_id": "resp1", "turn_id": "u1", "usage": {"input_tokens": 5000, "cached_input_tokens": 3000, "output_tokens": 400, "reasoning_output_tokens": 100}}}
-{"timestamp": "2026-10-05T14:54:22.000Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 5000, "cached_input_tokens": 3000, "output_tokens": 400, "reasoning_output_tokens": 100}, "last_token_usage": {"input_tokens": 5000, "cached_input_tokens": 3000, "output_tokens": 400, "reasoning_output_tokens": 100}}}}

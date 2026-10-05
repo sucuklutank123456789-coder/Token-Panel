@@ -7,11 +7,12 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from .model import DEFAULT_METRIC, SOURCE_LABELS, CodexLimits, Event, ThreadInfo, Usage, client_label
+from .opencode import OpenCodeDb
 from .parsers import ClaudeFile, CodexFile, JsonlFile
-from .paths import default_claude_dirs, default_codex_dirs
+from .paths import default_claude_dirs, default_codex_dirs, default_opencode_dirs, opencode_dbs
 
 RANGES = {
     "today": "Today",
@@ -21,6 +22,9 @@ RANGES = {
 }
 
 NO_TOOL = "Reply (no tools)"
+
+# The overview chart always shows this many days, whatever the selected range.
+DAILY_DAYS = 30
 
 # Walking the log directories for new files is the expensive part, so it runs at most this often.
 # In between, refresh() only stats the files it already knows.
@@ -87,6 +91,19 @@ class ClientRow:
 
 
 @dataclass
+class DayRow:
+    day: date
+    by_source: dict[str, Usage]
+
+    @property
+    def total(self) -> Usage:
+        u = Usage()
+        for x in self.by_source.values():
+            u.add(x)
+        return u
+
+
+@dataclass
 class Summary:
     range_key: str
     metric: str
@@ -96,20 +113,31 @@ class Summary:
     limits: CodexLimits | None
     file_count: int
     generated_at: float
+    daily: list[DayRow] = field(default_factory=list)  # oldest first, the last DAILY_DAYS days
 
 
 class Store:
-    def __init__(self, claude_dirs: list[str] | None = None, codex_dirs: list[str] | str | None = None):
+    def __init__(
+        self,
+        claude_dirs: list[str] | None = None,
+        codex_dirs: list[str] | str | None = None,
+        opencode_dirs: list[str] | None = None,
+    ):
         self.claude_dirs = claude_dirs if claude_dirs is not None else default_claude_dirs()
         if isinstance(codex_dirs, str):
             codex_dirs = [codex_dirs]
         self.codex_dirs = codex_dirs if codex_dirs is not None else default_codex_dirs()
-        self.files: dict[str, JsonlFile] = {}
+        self.opencode_dirs = opencode_dirs if opencode_dirs is not None else default_opencode_dirs()
+        self.files: dict[str, JsonlFile | OpenCodeDb] = {}
         self.events: dict[str, Event] = {}
         self.threads: dict[tuple[str, str], ThreadInfo] = {}
         self.limits: CodexLimits | None = None
         self._index_mtimes: dict[str, float] = {}
         self._discovered_at: float | None = None
+        # The daily table doesn't depend on the range or metric: computed once per data change and day.
+        self._generation = 0
+        self._daily_key: tuple | None = None
+        self._daily: list[DayRow] = []
         self._index_names: dict[str, str] = {}
 
     # --- Sink interface -----------------------------------------------------
@@ -141,6 +169,8 @@ class Store:
             for sub in ("sessions", "archived_sessions"):
                 for p in glob.glob(os.path.join(base, sub, "**", "*.jsonl"), recursive=True):
                     found.append((p, CodexFile))
+        for p in opencode_dbs(self.opencode_dirs):
+            found.append((p, OpenCodeDb))
         return found
 
     def _sync_files(self) -> None:
@@ -179,7 +209,26 @@ class Store:
             changed |= f.offset != offset_before
         for base in self.codex_dirs:
             changed |= self._read_codex_index(os.path.join(base, "session_index.jsonl"))
+        if changed:
+            self._generation += 1
         return changed
+
+    def _daily_rows(self, now: float) -> list[DayRow]:
+        """The 30-day table: the same for every range and metric, so computed once."""
+        today = datetime.fromtimestamp(now).date()
+        key = (self._generation, today, len(self.events))
+        if key == self._daily_key:
+            return self._daily
+        days = [today - timedelta(days=i) for i in range(DAILY_DAYS - 1, -1, -1)]
+        daily = {d: DayRow(d, {s: Usage() for s in SOURCE_LABELS}) for d in days}
+        daily_start = datetime.combine(days[0], datetime.min.time()).timestamp()
+        for ev in self.events.values():
+            if ev.ts >= daily_start:
+                row = daily.get(datetime.fromtimestamp(ev.ts).date())
+                if row is not None:
+                    row.by_source.setdefault(ev.source, Usage()).add(ev.usage)
+        self._daily_key, self._daily = key, list(daily.values())
+        return self._daily
 
     def _read_codex_index(self, path: str) -> bool:
         try:
@@ -213,6 +262,7 @@ class Store:
         by_source: dict[str, Usage] = {s: Usage() for s in SOURCE_LABELS}
         clients: dict[tuple[str, str], ClientRow] = {}
         threads: dict[tuple[str, str, str], ThreadRow] = {}
+        daily = self._daily_rows(time.time() if now is None else now)
 
         for ev in self.events.values():
             if ev.ts < start:
@@ -269,4 +319,5 @@ class Store:
             limits=self.limits,
             file_count=len(self.files),
             generated_at=time.time(),
+            daily=daily,
         )

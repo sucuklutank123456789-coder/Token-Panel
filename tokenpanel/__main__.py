@@ -6,9 +6,8 @@ import os
 import sys
 
 from .model import DEFAULT_METRIC, METRICS
-from .paths import default_claude_dirs, default_codex_dirs
+from .paths import default_claude_dirs, default_codex_dirs, default_opencode_dirs
 from .store import RANGES, Store
-
 
 # Stand-ins for characters a legacy console code page may lack.
 _FALLBACK = {"—": "-", "…": "...", "‹": "<", "›": ">", "·": "|"}
@@ -99,7 +98,9 @@ def _windows_console() -> None:
 def main(argv: list[str] | None = None) -> int:
     _windows_console()
     ap = argparse.ArgumentParser(prog="tokenpanel", description="Tray panel for Claude Code and Codex token usage")
-    ap.add_argument("--dump", action="store_true", help="Print the summary to the terminal instead of opening the panel")
+    ap.add_argument(
+        "--dump", action="store_true", help="Print the summary to the terminal instead of opening the panel"
+    )
     ap.add_argument("--range", choices=list(RANGES), default="all", help="Time range for --dump")
     ap.add_argument(
         "--metric",
@@ -111,6 +112,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--show", action="store_true", help="Also open the panel on startup")
     ap.add_argument("--claude-dir", action="append", help="Claude config directory (default ~/.claude)")
     ap.add_argument("--codex-dir", action="append", help="Codex directory (default ~/.codex)")
+    ap.add_argument(
+        "--opencode-dir", action="append", help="OpenCode data directory (default ~/.local/share/opencode)"
+    )
     if sys.platform == "win32":
         ap.add_argument("--wsl", action="store_true", help="Also read logs inside WSL distributions (for --dump)")
     ap.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
@@ -125,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         return Store(
             claude_dirs=args.claude_dir or default_claude_dirs(include_wsl),
             codex_dirs=args.codex_dir or default_codex_dirs(include_wsl),
+            opencode_dirs=args.opencode_dir or default_opencode_dirs(include_wsl),
         )
 
     if args.dump:

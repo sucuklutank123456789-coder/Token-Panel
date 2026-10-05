@@ -66,6 +66,27 @@ def default_claude_dirs(include_wsl: bool = False) -> list[str]:
     return _unique(bases)
 
 
+def default_opencode_dirs(include_wsl: bool = False) -> list[str]:
+    """OpenCode's data directory: $XDG_DATA_HOME/opencode, else ~/.local/share/opencode on every OS."""
+    xdg = os.environ.get("XDG_DATA_HOME")
+    dirs = [os.path.join(xdg or os.path.join(os.path.expanduser("~"), ".local", "share"), "opencode")]
+    if include_wsl:
+        dirs += [os.path.join(h, ".local", "share", "opencode") for h in wsl_homes()]
+    return _unique(dirs)
+
+
+def opencode_dbs(dirs: list[str]) -> list[str]:
+    """opencode.db (or opencode-<channel>.db) in each directory, plus the file OPENCODE_DB points at (an absolute
+    path, or relative to the local data directory)."""
+    found = []
+    for d in dirs:
+        found += glob.glob(os.path.join(d, "opencode*.db"))
+    env = os.environ.get("OPENCODE_DB")
+    if env:
+        found.append(env if os.path.isabs(env) else os.path.join(default_opencode_dirs()[0], env))
+    return [p for p in _unique(found) if os.path.isfile(p)]
+
+
 def default_codex_dirs(include_wsl: bool = False) -> list[str]:
     dirs = [os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")]
     if include_wsl:

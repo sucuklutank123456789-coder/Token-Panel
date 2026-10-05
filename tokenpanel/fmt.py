@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from datetime import datetime
 
@@ -9,10 +10,14 @@ from datetime import datetime
 def short(n: float) -> str:
     """15317124 -> '15.3M'"""
     n = float(n)
-    for div, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+    units = ((1e9, "B"), (1e6, "M"), (1e3, "K"))
+    for i, (div, suffix) in enumerate(units):
         if abs(n) >= div:
             v = n / div
-            return (f"{v:.0f}" if v >= 100 else f"{v:.1f}".removesuffix(".0")) + suffix
+            text = f"{v:.0f}" if abs(v) >= 100 else f"{v:.1f}".removesuffix(".0")
+            if text.lstrip("-") == "1000" and i > 0:  # 999,950 rounds up to the next unit: "1M", not "1000K"
+                return ("-" if n < 0 else "") + "1" + units[i - 1][1]
+            return text + suffix
     return str(int(n))
 
 
@@ -50,3 +55,24 @@ def clock(ts: float) -> str:
     if dt.date() == datetime.now().date():
         return dt.strftime("%H:%M")
     return dt.strftime("%b %d %H:%M")
+
+
+def money(usd: float) -> str:
+    """0.004 -> '<$0.01', 12.4 -> '$12.40', 1234.6 -> '$1,235'"""
+    if usd <= 0:
+        return "$0"
+    if usd < 0.01:
+        return "<$0.01"
+    if usd < 100:
+        return f"${usd:,.2f}"
+    return f"${usd:,.0f}"
+
+
+def nice_tick(peak: float) -> float:
+    """The largest round number (1, 2 or 5 × 10^n) not above peak, for a chart's gridline."""
+    if peak <= 0:
+        return 0.0
+    mag = 10 ** math.floor(math.log10(peak))
+    if mag > peak:  # log10 rounded up, e.g. for 999.9999999999999
+        mag /= 10
+    return max((m * mag for m in (1, 2, 5, 10) if m * mag <= peak), default=mag)

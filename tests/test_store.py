@@ -1,16 +1,14 @@
 import json
 import os
-import tempfile
-import unittest
-
-from unittest import mock
-
 import plistlib
 import sys
+import tempfile
+import unittest
+from unittest import mock
 
-from tokenpanel import autostart, paths
-from tokenpanel.__main__ import console_encoding
+from tokenpanel import autostart, paths, pricing
 from tokenpanel import store as store_mod
+from tokenpanel.__main__ import console_encoding
 from tokenpanel.store import Store, project_name
 
 
@@ -75,10 +73,14 @@ def codex_call(name):
 
 class StoreTest(unittest.TestCase):
     def setUp(self):
+        patcher = mock.patch.object(pricing, "_user", {})  # no user price file from this machine
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.claude = os.path.join(self.tmp.name, "claude")
         self.codex = os.path.join(self.tmp.name, "codex")
-        self.store = Store([self.claude], self.codex)
+        self.opencode = os.path.join(self.tmp.name, "opencode")
+        self.store = Store([self.claude], self.codex, [self.opencode])
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -121,6 +123,13 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(s.total.value("raw"), 142)
         # The app method counts split lines separately: m1 twice (15+15) + 20 + 7.
         self.assertEqual(s.total.value("app"), 57)
+        # Every metric splits into input and output.
+        self.assertEqual(s.total.split("app"), (20, 37))
+        self.assertEqual(s.total.split("io"), (10, 32))
+        self.assertEqual(s.total.split("raw"), (110, 32))
+        # A response split across lines is priced once: Opus 5.5 ($4 in, $0.20 cache read, $20 out) for m1
+        # and m3, Sonnet 5.5 ($10 out) for m2.
+        self.assertAlmostEqual(s.total.cost, (10 * 4 + 100 * 0.2 + 5 * 20 + 20 * 10 + 7 * 20) / 1e6)
         self.assertEqual(c[("claude", "sdk-ts")].usage.total, 7)
 
     def test_codex_records_models_tools_and_limits(self):
@@ -129,9 +138,10 @@ class StoreTest(unittest.TestCase):
             codex_meta("t1", "zed"),
             {"type": "response_item", "payload": {"type": "message", "role": "user",
                                                   "content": [{"type": "input_text", "text": "<env>x</env>"}]}},
-            {"type": "response_item", "payload": {"type": "message", "role": "user",
-                                                  "content": [{"type": "input_text",
-                                                               "text": "# Context from my IDE setup:\n\n## My request:\nselam\n"}]}},
+            {"type": "response_item", "payload": {
+                "type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": "# Context from my IDE setup:\n\n## My request:\nselam\n"}],
+            }},
             codex_turn("u1", "gpt-5.5", "high"),
             codex_call("exec_command"),
             codex_call("apply_patch"),
@@ -191,6 +201,7 @@ class StoreTest(unittest.TestCase):
         s, c = self.clients()
         u = c[("codex", "Codex Desktop")].usage
         self.assertEqual(u.value("app"), (1400 - 700) + 120)
+        self.assertEqual(u.split("app"), (1400 - 700, 120))
         self.assertEqual(u.value("io"), (400 + 100) + (4000 + 300) + (300 + 20))
 
     def test_codex_legacy_token_count_fallback(self):
@@ -233,19 +244,51 @@ class StoreTest(unittest.TestCase):
     def test_several_codex_dirs(self):
         # e.g. Windows plus a WSL distribution; the same thread in both is counted once.
         other = os.path.join(self.tmp.name, "codex-wsl")
-        rows = [codex_meta("t1", "codex-tui"), codex_turn("u1", "gpt-5.5", "high"), codex_record("r1", "u1", 100, 0, 10)]
+        rows = [codex_meta("t1", "codex-tui"), codex_turn("u1", "gpt-5.5", "high"),
+                codex_record("r1", "u1", 100, 0, 10)]
         write_jsonl(os.path.join(self.codex, "sessions", "2026", "10", "04", "rollout-a.jsonl"), rows)
         write_jsonl(os.path.join(other, "sessions", "2026", "10", "04", "rollout-a.jsonl"), rows)
         write_jsonl(os.path.join(other, "sessions", "2026", "10", "04", "rollout-b.jsonl"),
                     [codex_meta("t2", "codex-tui"), codex_turn("u1", "gpt-5.5", "high"),
                      codex_record("r2", "u1", 50, 0, 5)])
         write_jsonl(os.path.join(other, "session_index.jsonl"), [{"id": "t2", "thread_name": "From WSL"}])
-        store = Store([self.claude], [self.codex, other])
+        store = Store([self.claude], [self.codex, other], [self.opencode])
         store.refresh()
         s = store.summarize("all")
         self.assertEqual(s.total.total, 110 + 55)
         titles = {t.title for c in s.clients for t in c.threads}
         self.assertIn("From WSL", titles)
+
+    def test_daily_last_30_days(self):
+        from datetime import datetime, timedelta
+
+        now = datetime(2026, 10, 4, 12, 0).timestamp()
+
+        def ts(days_ago, hour=10):
+            return (datetime(2026, 10, 4, hour) - timedelta(days=days_ago)).astimezone().isoformat()
+
+        p = os.path.join(self.claude, "projects", "x", "s.jsonl")
+        write_jsonl(p, [
+            claude_msg("m1", "r1", "s", "cli", ts=ts(0), output_tokens=5),
+            claude_msg("m2", "r2", "s", "cli", ts=ts(0, 1), output_tokens=7),
+            claude_msg("m3", "r3", "s", "cli", ts=ts(29), output_tokens=3),
+            claude_msg("m4", "r4", "s", "cli", ts=ts(30), output_tokens=100),  # 31st day back: left out
+        ])
+        write_jsonl(os.path.join(self.codex, "sessions", "2026", "10", "02", "rollout-d.jsonl"), [
+            codex_meta("td", "codex-tui"), codex_turn("u1", "gpt-5.5", "high"),
+            dict(codex_record("rd", "u1", 40, 0, 2), timestamp=ts(2)),
+        ])
+        self.store.refresh()
+        # The daily rows ignore the selected range.
+        s = self.store.summarize("today", now=now)
+        self.assertEqual(len(s.daily), store_mod.DAILY_DAYS)
+        self.assertEqual(s.daily[-1].day.isoformat(), "2026-10-04")
+        self.assertEqual(s.daily[0].day.isoformat(), "2026-09-05")
+        self.assertEqual(s.daily[-1].by_source["claude"].total, 12)
+        self.assertEqual(s.daily[-3].by_source["codex"].total, 42)
+        self.assertEqual(s.daily[0].total.total, 3)
+        self.assertEqual(sum(d.total.total for d in s.daily), 12 + 42 + 3)
+        self.assertEqual(s.total.total, 12)
 
     def test_new_files_found_once_a_minute_known_files_every_tick(self):
         d = os.path.join(self.claude, "projects", "x")
@@ -300,6 +343,17 @@ class PathsTest(unittest.TestCase):
         self.assertEqual(project_name("/Users/ali/Developer/Token"), "Token")
         self.assertEqual(project_name("/"), "/")
         self.assertEqual(project_name(""), "—")
+
+    def test_opencode_db_env_adds_a_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b = os.path.join(d, "a"), os.path.join(d, "b")
+            os.makedirs(a)
+            os.makedirs(b)
+            for p in (os.path.join(a, "opencode.db"), os.path.join(b, "custom.db")):
+                open(p, "w").close()
+            with mock.patch.dict(os.environ, {"OPENCODE_DB": os.path.join(b, "custom.db")}):
+                found = paths.opencode_dbs([a])
+            self.assertEqual(sorted(os.path.basename(p) for p in found), ["custom.db", "opencode.db"])
 
     def test_default_dirs(self):
         with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home}):

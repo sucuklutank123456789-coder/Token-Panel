@@ -36,7 +36,7 @@ The choice is remembered.
 
 ### Windows
 
-Download `TokenPanel.exe` from the [Releases](https://github.com/sucuklutank123456789-coder/token-panel/releases) page
+Download `TokenPanel.exe` from the [Releases](https://github.com/sucuklutank123456789-coder/Token-Panel/releases) page
 (or, for the latest build, from the newest successful run under **Actions → Build → Artifacts**) and run it.
 It is a single file; nothing is installed and Python is not needed.
 
@@ -54,8 +54,8 @@ Windows. Terminal output works too (in PowerShell): `.\TokenPanel.exe --dump | O
 ### Linux, any distribution (recommended)
 
 ```bash
-git clone https://github.com/sucuklutank123456789-coder/token-panel.git
-cd token-panel
+git clone https://github.com/sucuklutank123456789-coder/Token-Panel.git
+cd Token-Panel
 ./install.sh             # add --autostart to start it on login
 ```
 
@@ -82,7 +82,7 @@ To update: `git pull && ./install.sh`.
 ### Arch package
 
 ```bash
-cd token-panel/packaging/arch
+cd Token-Panel/packaging/arch
 makepkg -si
 ```
 
@@ -128,7 +128,6 @@ tokenpanel --dump --range 7d --metric app   # app | io | new | raw
 Known limitations:
 
 - Only usage on this computer is shown; cloud sessions (claude.ai/code, Codex cloud tasks) leave no local logs.
-- Claude Code deletes transcripts older than 30 days by default (`cleanupPeriodDays` in `~/.claude/settings.json`).
 - On the Claude side `sdk-ts` covers every tool built on the Agent SDK; it equals ACP only if Zed is the only one you use.
 - Codex Desktop opens each chat in an auto-created folder, so the "project" there is that folder's name.
 - "Spent on" is approximate: a model call's tokens are split evenly across the tools used in that call.

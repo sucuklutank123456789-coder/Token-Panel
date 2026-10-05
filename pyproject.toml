@@ -9,7 +9,8 @@ description = "System tray panel showing Claude Code and Codex token usage"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-dependencies = ["PySide6>=6.4"]
+# tzdata: Windows has no system time zone database (used to read reset times like "4pm (Europe/Berlin)").
+dependencies = ["PySide6>=6.4", "tzdata; sys_platform == 'win32'"]
 
 [project.urls]
 Homepage = "https://github.com/sucuklutank123456789-coder/Token-Panel"

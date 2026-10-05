@@ -11,6 +11,7 @@ import os
 from datetime import datetime
 from typing import Protocol
 
+from .limits import LimitHit, parse_limit_message
 from .model import CodexLimits, Event, RateWindow, ThreadInfo, Usage
 from .pricing import price_usage
 
@@ -22,6 +23,8 @@ class Sink(Protocol):
     def thread(self, source: str, thread_id: str) -> ThreadInfo: ...
 
     def set_codex_limits(self, limits: CodexLimits) -> None: ...
+
+    def add_limit_hit(self, hit: LimitHit) -> None: ...
 
 
 def parse_ts(value) -> float:
@@ -161,7 +164,13 @@ class ClaudeFile(JsonlFile):
         msg = d.get("message") or {}
         usage = msg.get("usage")
         model = msg.get("model") or ""
-        if not isinstance(usage, dict) or model == "<synthetic>":
+        if model == "<synthetic>" or d.get("isApiErrorMessage"):
+            # Not a model call; may be the message Claude Code writes when a usage limit is reached.
+            hit = parse_limit_message(d, parse_ts(d.get("timestamp")))
+            if hit is not None and hit.ts:
+                sink.add_limit_hit(hit)
+            return
+        if not isinstance(usage, dict):
             return
         details = usage.get("output_tokens_details") or {}
         u = Usage(

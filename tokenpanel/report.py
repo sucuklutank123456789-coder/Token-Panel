@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from . import fmt
+from .limits import KIND_LABELS
 from .model import METRICS, SOURCE_LABELS
 from .store import RANGES, Summary
 
@@ -21,6 +22,21 @@ def render(s: Summary, max_threads: int = 5) -> str:
         f"  input {fmt.short(inp)} · output {fmt.short(outp)} · API cost {cost(s.total)}",
         "  " + " · ".join(f"{SOURCE_LABELS[k]} {fmt.short(v(u))}" for k, u in s.by_source.items()),
     ]
+    est = s.claude_limits
+    if est and est.windows:
+        parts = []
+        for w in est.windows:
+            if w.used_pct is not None:
+                used = f"{'' if est.official else '≈'}{w.used_pct:.0f}%"
+            else:
+                used = f"{fmt.money(w.cost)} used"
+            when = "last 7 days" if w.kind == "weekly" and not w.exact_end else f"resets {fmt.clock(w.end)}"
+            parts.append(f"{KIND_LABELS.get(w.kind, w.kind)} {used} ({when})")
+        source = f"from Claude Code, {fmt.ago(est.as_of)}" if est.official else "estimate"
+        out.append(f"  Claude limits ({source}): " + ", ".join(parts))
+        if est.blocked_until:
+            kind = KIND_LABELS.get(est.blocked_kind, "")
+            out.append(f"  Claude {kind} limit reached, resets {fmt.clock(est.blocked_until)}")
     if s.limits and s.limits.primary:
         p, w = s.limits.primary, s.limits.secondary
         line = f"  Codex limits: 5-hour {p.used_percent:.0f}%"

@@ -37,11 +37,14 @@ from PySide6.QtWidgets import (
 )
 
 from . import autostart, fmt
+from .limits import KIND_LABELS, ClaudeLimits
 from .model import DEFAULT_METRIC, METRICS, SOURCE_LABELS, Usage
 from .paths import wsl_distros
 from .store import DAILY_DAYS, RANGES, ClientRow, DayRow, Store, Summary, ThreadRow, range_start
 
 REFRESH_MS = 5000
+# Limit windows reset and "x min ago" texts age without any log change; re-summarize at least this often.
+RESUMMARIZE_S = 60
 MAC = sys.platform == "darwin"
 
 
@@ -119,6 +122,7 @@ class Worker(QObject):
         self.metric_key = metric
         self.include_wsl = include_wsl
         self.timer: QTimer | None = None
+        self.last_emit = 0.0
 
     @Slot()
     def start(self):
@@ -130,7 +134,7 @@ class Worker(QObject):
 
     @Slot()
     def tick(self, force: bool = False):
-        if self.store.refresh() or force:
+        if self.store.refresh() or force or time.monotonic() - self.last_emit > RESUMMARIZE_S:
             self._emit()
 
     @Slot()
@@ -168,6 +172,7 @@ class Worker(QObject):
             self._emit()
 
     def _emit(self):
+        self.last_emit = time.monotonic()
         today = self.store.summarize("today", self.metric_key)
         current = today if self.range_key == "today" else self.store.summarize(self.range_key, self.metric_key)
         self.updated.emit(current, today)
@@ -746,6 +751,7 @@ class Panel(QWidget):
             box.addWidget(chart)
             lay.addLayout(box)
 
+        self._claude_limits(lay, s.claude_limits)
         self._limits(lay, s)
 
         lay.addSpacing(14)
@@ -791,6 +797,69 @@ class Panel(QWidget):
         btn.setMenu(menu)
         btn.setToolTip(hints[s.metric])
         return btn
+
+    def _limit_row(self, lay, name: str, state: str, pct: float | None, value: str, tooltip: str):
+        th = self.theme
+        box = QVBoxLayout()
+        box.setContentsMargins(10, 4, 10, 4)
+        box.setSpacing(4)
+        top = QHBoxLayout()
+        top.addWidget(label(name, th.text, 12), 1)
+        top.addWidget(label(state, th.muted, 11))
+        top.addSpacing(8)
+        top.addWidget(label(value, th.text, 12, True))
+        box.addLayout(top)
+        if pct is not None:
+            color = th.critical if pct >= 90 else th.warning if pct >= 75 else th.muted
+            b = Bar(th, 6)
+            b.set([(min(pct, 100), color)], 100)
+            box.addWidget(b)
+        holder = QWidget()
+        holder.setLayout(box)
+        holder.setToolTip(tooltip)
+        lay.addWidget(holder)
+
+    def _claude_limits(self, lay, est: ClaudeLimits | None):
+        if est is None or not est.windows:
+            return
+        th = self.theme
+        self._section(lay, "Claude usage limits" + ("" if est.official else " (estimate)"))
+        if est.blocked_until:
+            warn = label(
+                f"{KIND_LABELS.get(est.blocked_kind, 'Usage')} limit reached · resets {fmt.clock(est.blocked_until)}",
+                th.critical, 12, True,
+            )
+            warn.setContentsMargins(10, 0, 10, 2)
+            lay.addWidget(warn)
+        for w in est.windows:
+            name = KIND_LABELS.get(w.kind, w.kind)
+            if w.kind == "weekly" and not w.exact_end:
+                state = "last 7 days"
+            else:
+                state = f"resets {'' if w.exact_end else '~'}{fmt.clock(w.end)}"
+            if est.official:
+                value, tip = f"{w.used_pct:.0f}%", "Claude Code's own figure for this window."
+            elif w.used_pct is not None:
+                value = f"≈{w.used_pct:.0f}%"
+                tip = (
+                    f"{fmt.money(w.cost)} used at API prices. You reached this limit on "
+                    f"{fmt.clock(w.cap_from)} after {fmt.money(w.cap)}, so that amount is taken as the limit."
+                )
+            else:
+                value = f"{fmt.money(w.cost)} used"
+                tip = (
+                    "Used so far, at API prices. No limit has been reached in the last 30 days, so there is "
+                    "nothing to compare against yet; the percentage appears after the first one."
+                )
+            self._limit_row(lay, name, state, w.used_pct, value, tip)
+        if est.official:
+            note = f"From Claude Code, {fmt.ago(est.as_of)}"
+        else:
+            note = "Estimated from this computer's logs. /usage in Claude Code shows the exact figures."
+        foot = label(note, th.muted, 10)
+        foot.setWordWrap(True)
+        foot.setContentsMargins(10, 0, 10, 0)
+        lay.addWidget(foot)
 
     def _limits(self, lay, s: Summary):
         lim = s.limits

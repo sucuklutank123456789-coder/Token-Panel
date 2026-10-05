@@ -10,7 +10,7 @@ The panel opens layer by layer:
 
 1. **Overview** — total tokens for the selected range (Today / 7d / 30d / All) with its input / output split
    and estimated API cost, the Claude Code / Codex / OpenCode share, a daily chart of the last 30 days, and
-   Codex's 5-hour and weekly rate limits. Hover a column for its numbers; click the chart for the same days as a
+   the 5-hour and weekly usage limits of Claude and Codex. Hover a column for its numbers; click the chart for the same days as a
    table. Days outside the selected range are drawn faded.
 2. **Details** — per-tool breakdown by client: CLI, Desktop, VS Code extension, ACP (Zed);
    the models used, the number of threads and the estimated cost for each.
@@ -46,6 +46,22 @@ what the same work would cost on the API; Claude Pro/Max and ChatGPT plans are b
   (checked 2026-10-05; the OpenAI figures could only be read through search results, so double-check them).
 - For OpenCode, a model the panel doesn't know is priced with the cost OpenCode itself logged.
 - Models without a known price are left out of the cost and reported as "tokens without a known price".
+
+### Claude usage limits
+
+Codex logs its own limit percentages; Claude Code doesn't, so the panel uses the best local source it has:
+
+1. **Claude Code's own figures.** Claude Code caches the 5-hour and weekly percentages in `~/.claude.json` when
+   it fetches them (for example when you run `/usage`). While that snapshot's window hasn't reset, the panel
+   shows it, with its age ("From Claude Code, 12 min ago").
+2. **An estimate** otherwise, marked "(estimate)". When you hit a limit, Claude Code writes a message into the
+   transcript; the usage up to that moment (in API-price dollars, because the limits weigh models differently)
+   is taken as the size of that limit, and the current window is shown as a share of it. Only limit messages
+   from the last 30 days are used. Until a limit has been reached once, the panel shows the usage so far and
+   when the window resets. The 5-hour window starts with the first message after the previous one ended; the
+   weekly window is the last 7 days unless a weekly limit message has revealed your weekly reset time.
+
+If a limit is currently reached, the panel says so and shows when it resets.
 
 Prices can be added or corrected in `prices.json`, in USD per million tokens:
 

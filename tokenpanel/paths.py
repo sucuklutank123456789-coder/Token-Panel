@@ -66,21 +66,6 @@ def default_claude_dirs(include_wsl: bool = False) -> list[str]:
     return _unique(bases)
 
 
-def claude_json_paths(claude_dirs: list[str]) -> list[str]:
-    """Where Claude Code keeps .claude.json for these config directories: inside a CLAUDE_CONFIG_DIR, and next to
-    the default ~/.claude (found even when ~/.claude is a symlink and the directory was given resolved)."""
-    home_claude = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude"))
-    out = []
-    for base in claude_dirs:
-        base = os.path.normpath(base)
-        out.append(os.path.join(base, ".claude.json"))
-        if os.path.basename(base) == ".claude":
-            out.append(os.path.join(os.path.dirname(base), ".claude.json"))
-        if os.path.normcase(os.path.realpath(base)) == os.path.normcase(home_claude):
-            out.append(os.path.join(os.path.expanduser("~"), ".claude.json"))
-    return _unique(out)
-
-
 def default_opencode_dirs(include_wsl: bool = False) -> list[str]:
     """OpenCode's data directory: $XDG_DATA_HOME/opencode, else ~/.local/share/opencode on every OS."""
     xdg = os.environ.get("XDG_DATA_HOME")

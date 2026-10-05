@@ -36,14 +36,13 @@ from PySide6.QtWidgets import (
 )
 
 from . import autostart, fmt
-from .describe import blocked_text, cost_text, limits_source, window_text
-from .limits import ClaudeLimits
+from .describe import cost_text
 from .model import DEFAULT_METRIC, METRICS, SOURCE_LABELS, Usage
 from .paths import wsl_distros
 from .store import DAILY_DAYS, RANGES, ClientRow, DayRow, Store, Summary, ThreadRow, range_start
 
 REFRESH_MS = 5000
-# Limit windows reset and "x min ago" texts age without any log change; re-summarize at least this often.
+# Codex limit resets and "x min ago" texts age without any log change; re-summarize at least this often.
 RESUMMARIZE_S = 60
 MAC = sys.platform == "darwin"
 
@@ -735,7 +734,6 @@ class Panel(QWidget):
             box.addWidget(chart)
             lay.addLayout(box)
 
-        self._claude_limits(lay, s.claude_limits)
         self._limits(lay, s)
 
         lay.addSpacing(14)
@@ -781,45 +779,6 @@ class Panel(QWidget):
         btn.setMenu(menu)
         btn.setToolTip(hints[s.metric])
         return btn
-
-    def _limit_row(self, lay, name: str, state: str, pct: float | None, value: str, tooltip: str):
-        th = self.theme
-        box = QVBoxLayout()
-        box.setContentsMargins(10, 4, 10, 4)
-        box.setSpacing(4)
-        top = QHBoxLayout()
-        top.addWidget(label(name, th.text, 12), 1)
-        top.addWidget(label(state, th.muted, 11))
-        top.addSpacing(8)
-        top.addWidget(label(value, th.text, 12, True))
-        box.addLayout(top)
-        if pct is not None:
-            color = th.critical if pct >= 90 else th.warning if pct >= 75 else th.muted
-            b = Bar(th, 6)
-            b.set([(min(pct, 100), color)], 100)
-            box.addWidget(b)
-        holder = QWidget()
-        holder.setLayout(box)
-        holder.setToolTip(tooltip)
-        lay.addWidget(holder)
-
-    def _claude_limits(self, lay, est: ClaudeLimits | None):
-        if est is None or not est.windows:
-            return
-        th = self.theme
-        self._section(lay, "Claude usage limits" + ("" if est.partly_official else " (estimate)"))
-        blocked = blocked_text(est)
-        if blocked:
-            warn = label(blocked, th.critical, 12, True)
-            warn.setContentsMargins(10, 0, 10, 2)
-            lay.addWidget(warn)
-        for w in est.windows:
-            t = window_text(w)
-            self._limit_row(lay, t.name, t.when, w.used_pct, t.value, t.detail)
-        foot = label(limits_source(est), th.muted, 10)
-        foot.setWordWrap(True)
-        foot.setContentsMargins(10, 0, 10, 0)
-        lay.addWidget(foot)
 
     def _limits(self, lay, s: Summary):
         lim = s.limits

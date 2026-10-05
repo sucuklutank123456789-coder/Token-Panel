@@ -344,20 +344,6 @@ class PathsTest(unittest.TestCase):
         self.assertEqual(project_name("/"), "/")
         self.assertEqual(project_name(""), "—")
 
-    def test_claude_json_next_to_a_symlinked_claude_dir(self):
-        with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home}):
-            real = os.path.join(home, "dotfiles", "claude-config")
-            os.makedirs(real)
-            try:
-                os.symlink(real, os.path.join(home, ".claude"))
-            except (OSError, NotImplementedError):
-                self.skipTest("no symlinks here")
-            # Paths come back resolved (/private/var on macOS, long names on Windows); compare them that way.
-            listed = paths.claude_json_paths(paths.default_claude_dirs())
-            found = {os.path.normcase(os.path.realpath(p)) for p in listed}
-            self.assertIn(os.path.normcase(os.path.realpath(os.path.join(home, ".claude.json"))), found)
-            self.assertIn(os.path.normcase(os.path.realpath(os.path.join(real, ".claude.json"))), found)
-
     def test_opencode_db_env_adds_a_file(self):
         with tempfile.TemporaryDirectory() as d:
             a, b = os.path.join(d, "a"), os.path.join(d, "b")

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from . import fmt
-from .describe import blocked_text, cost_text, limits_source, window_text
+from .describe import cost_text
 from .model import METRICS, SOURCE_LABELS
 from .store import RANGES, Summary
 
@@ -18,13 +18,6 @@ def render(s: Summary, max_threads: int = 5) -> str:
         f"  input {fmt.short(inp)} · output {fmt.short(outp)} · {cost_text(s.total)}",
         "  " + " · ".join(f"{SOURCE_LABELS[k]} {fmt.short(v(u))}" for k, u in s.by_source.items()),
     ]
-    est = s.claude_limits
-    if est and est.windows:
-        texts = [window_text(w) for w in est.windows]
-        out.append("  Claude limits: " + ", ".join(f"{t.name} {t.value} ({t.when})" for t in texts))
-        out.append(f"    {limits_source(est)}")
-        if blocked_text(est):
-            out.append(f"  Claude: {blocked_text(est)}")
     if s.limits and s.limits.primary:
         p, w = s.limits.primary, s.limits.secondary
         line = f"  Codex limits: 5-hour {p.used_percent:.0f}%"

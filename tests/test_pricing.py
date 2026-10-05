@@ -77,5 +77,18 @@ class PricingTest(unittest.TestCase):
         self.assertEqual(pricing.load_user_prices("/nonexistent/prices.json"), {})
 
 
+
+
+class FormatTest(unittest.TestCase):
+    def test_short_and_money(self):
+        from tokenpanel import fmt
+
+        self.assertEqual(
+            [fmt.short(x) for x in (999, 999_499, 999_950, 1_000_000, 15_317_124, 310_000, 99_950)],
+            ["999", "999K", "1M", "1M", "15.3M", "310K", "100K"],
+        )
+        self.assertEqual([fmt.money(x) for x in (0, 0.004, 12.4, 1234.6)], ["$0", "<$0.01", "$12.40", "$1,235"])
+
+
 if __name__ == "__main__":
     unittest.main()

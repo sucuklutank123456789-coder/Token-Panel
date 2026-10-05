@@ -9,10 +9,14 @@ from datetime import datetime
 def short(n: float) -> str:
     """15317124 -> '15.3M'"""
     n = float(n)
-    for div, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+    units = ((1e9, "B"), (1e6, "M"), (1e3, "K"))
+    for i, (div, suffix) in enumerate(units):
         if abs(n) >= div:
             v = n / div
-            return (f"{v:.0f}" if v >= 100 else f"{v:.1f}".removesuffix(".0")) + suffix
+            text = f"{v:.0f}" if abs(v) >= 100 else f"{v:.1f}".removesuffix(".0")
+            if text.lstrip("-") == "1000" and i > 0:  # 999,950 rounds up to the next unit: "1M", not "1000K"
+                return ("-" if n < 0 else "") + "1" + units[i - 1][1]
+            return text + suffix
     return str(int(n))
 
 

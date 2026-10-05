@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +37,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          python packaging/windows/make_ico.py packaging/windows/tokenpanel.ico
+          python packaging/make_icons.py ico packaging/windows/tokenpanel.ico
           pyinstaller --noconfirm packaging/windows/tokenpanel.spec
       - name: Smoke test
         shell: pwsh
@@ -85,17 +85,79 @@ jobs:
           path: dist/TokenPanel.exe
           if-no-files-found: error
 
+  macos-app:
+    needs: tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: python -m pip install "PySide6>=6.4" pyinstaller
+      - name: Build TokenPanel.app
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          python packaging/make_icons.py iconset "$RUNNER_TEMP/tokenpanel.iconset"
+          iconutil -c icns "$RUNNER_TEMP/tokenpanel.iconset" -o packaging/macos/tokenpanel.icns
+          pyinstaller --noconfirm packaging/macos/tokenpanel.spec
+          # Unsigned apps still need an ad-hoc signature to run on Apple Silicon.
+          codesign --force --deep --sign - dist/TokenPanel.app
+          codesign --verify --deep --strict dist/TokenPanel.app
+          lipo -archs dist/TokenPanel.app/Contents/MacOS/TokenPanel | grep -qw "${{ matrix.arch }}"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' dist/TokenPanel.app/Contents/Info.plist)" = true
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          logs="$RUNNER_TEMP/logs"
+          python scripts/sample_logs.py "$logs"
+          exe=dist/TokenPanel.app/Contents/MacOS/TokenPanel
+          dirs=(--claude-dir "$logs/claude" --codex-dir "$logs/codex")
+
+          # --dump: reads the sample logs and prints the summary.
+          "$exe" --dump --range today "${dirs[@]}" | tee dump.txt
+          for want in "Claude Code · CLI" "Codex · Desktop" "token-panel" "Yanıtla çiz"; do
+            grep -qF "$want" dump.txt || { echo "--dump output lacks '$want'"; exit 1; }
+          done
+
+          # --self-test: opens the panel and renders every level, with the real Cocoa platform plugin
+          # and with the offscreen one.
+          "$exe" --self-test "${dirs[@]}"
+          QT_QPA_PLATFORM=offscreen "$exe" --self-test "${dirs[@]}"
+
+          ditto -c -k --keepParent dist/TokenPanel.app "TokenPanel-macos-${{ matrix.arch }}.zip"
+          du -sh dist/TokenPanel.app TokenPanel-macos-*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TokenPanel-macos-${{ matrix.arch }}
+          path: TokenPanel-macos-${{ matrix.arch }}.zip
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: windows-exe
+    needs: [windows-exe, macos-app]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: TokenPanel-windows
+          pattern: TokenPanel-*
+          merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: TokenPanel.exe
+          files: |
+            TokenPanel.exe
+            TokenPanel-macos-*.zip
           generate_release_notes: true

@@ -52,8 +52,8 @@ def project_name(cwd: str) -> str:
 
 
 def _is_home(parts: list[str]) -> bool:
-    if parts[:1] == ["home"]:
-        return len(parts) <= 2  # /home/<user>
+    if parts[:1] in (["home"], ["Users"]):
+        return len(parts) <= 2  # /home/<user> on Linux, /Users/<user> on macOS
     # C:\Users\<user>
     return 2 <= len(parts) <= 3 and parts[0].endswith(":") and parts[1].lower() == "users"
 

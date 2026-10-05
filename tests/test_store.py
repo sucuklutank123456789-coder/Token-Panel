@@ -5,7 +5,10 @@ import unittest
 
 from unittest import mock
 
-from tokenpanel import paths
+import plistlib
+import sys
+
+from tokenpanel import autostart, paths
 from tokenpanel.__main__ import console_encoding
 from tokenpanel import store as store_mod
 from tokenpanel.store import Store, project_name
@@ -293,6 +296,8 @@ class PathsTest(unittest.TestCase):
         self.assertEqual(project_name(r"D:\work"), "work")
         self.assertEqual(project_name("/home/ali/Token"), "Token")
         self.assertEqual(project_name("/home/ali"), "~ (home)")
+        self.assertEqual(project_name("/Users/ali"), "~ (home)")
+        self.assertEqual(project_name("/Users/ali/Developer/Token"), "Token")
         self.assertEqual(project_name("/"), "/")
         self.assertEqual(project_name(""), "—")
 
@@ -307,6 +312,34 @@ class PathsTest(unittest.TestCase):
             with mock.patch.object(paths, "wsl_homes", return_value=[os.path.join(home, "wsl", "ali")]):
                 self.assertIn(os.path.join(home, "wsl", "ali", ".codex"), paths.default_codex_dirs(include_wsl=True))
                 self.assertIn(os.path.join(home, "wsl", "ali", ".claude"), paths.default_claude_dirs(include_wsl=True))
+
+
+class MacAutostartTest(unittest.TestCase):
+    def test_launch_agent(self):
+        with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home}), \
+                mock.patch.object(sys, "platform", "darwin"):
+            self.assertTrue(autostart.supported())
+            self.assertEqual(autostart.label(), "Start at login")
+            self.assertFalse(autostart.enabled())
+            autostart.set_enabled(True)
+            self.assertTrue(autostart.enabled())
+            with open(autostart.agent_path(), "rb") as fh:
+                agent = plistlib.load(fh)
+            self.assertEqual(agent["Label"], autostart.AGENT_LABEL)
+            self.assertTrue(agent["RunAtLoad"])
+            self.assertEqual(agent["ProgramArguments"][-1], "--autostart")
+
+            # A moved app bundle is followed on the next start.
+            with mock.patch.object(sys, "frozen", True, create=True), \
+                    mock.patch.object(sys, "executable", "/Applications/TokenPanel.app/Contents/MacOS/TokenPanel"):
+                autostart.sync()
+                with open(autostart.agent_path(), "rb") as fh:
+                    self.assertEqual(plistlib.load(fh)["ProgramArguments"],
+                                     ["/Applications/TokenPanel.app/Contents/MacOS/TokenPanel", "--autostart"])
+
+            autostart.set_enabled(False)
+            self.assertFalse(autostart.enabled())
+            autostart.set_enabled(False)  # already off
 
 
 class ConsoleEncodingTest(unittest.TestCase):

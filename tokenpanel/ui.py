@@ -1134,11 +1134,16 @@ class SelfTest(QObject):
     def __init__(self, app: QApplication, main: App):
         super().__init__()
         self.app, self.main = app, main
+        self.done = False
         main.worker.updated.connect(self.check)
+        # The worker may have sent its first update before this connection existed; ask for a fresh one.
+        main.request_refresh.emit()
         QTimer.singleShot(60000, lambda: self.finish(3, "timed out"))
 
     @Slot(object, object)
     def check(self, current: Summary, today: Summary):
+        if self.done:
+            return
         try:
             p = self.main.panel
             p.grab()
@@ -1163,6 +1168,9 @@ class SelfTest(QObject):
             self.finish(2, f"self-test failed: {e!r}")
 
     def finish(self, code: int, message: str):
+        if self.done:
+            return
+        self.done = True
         print(message, flush=True)
         self.main.shutdown()
         self.app.exit(code)

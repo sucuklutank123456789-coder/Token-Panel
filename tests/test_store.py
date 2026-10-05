@@ -352,9 +352,11 @@ class PathsTest(unittest.TestCase):
                 os.symlink(real, os.path.join(home, ".claude"))
             except (OSError, NotImplementedError):
                 self.skipTest("no symlinks here")
-            found = paths.claude_json_paths(paths.default_claude_dirs())
-            self.assertIn(os.path.join(home, ".claude.json"), found)
-            self.assertIn(os.path.join(os.path.realpath(real), ".claude.json"), found)
+            # Paths come back resolved (/private/var on macOS, long names on Windows); compare them that way.
+            listed = paths.claude_json_paths(paths.default_claude_dirs())
+            found = {os.path.normcase(os.path.realpath(p)) for p in listed}
+            self.assertIn(os.path.normcase(os.path.realpath(os.path.join(home, ".claude.json"))), found)
+            self.assertIn(os.path.normcase(os.path.realpath(os.path.join(real, ".claude.json"))), found)
 
     def test_opencode_db_env_adds_a_file(self):
         with tempfile.TemporaryDirectory() as d:

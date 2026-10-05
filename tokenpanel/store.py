@@ -22,6 +22,10 @@ RANGES = {
 
 NO_TOOL = "Reply (no tools)"
 
+# Walking the log directories for new files is the expensive part, so it runs at most this often.
+# In between, refresh() only stats the files it already knows.
+DISCOVER_SECONDS = 60.0
+
 
 def range_start(key: str, now: float | None = None) -> float:
     now = time.time() if now is None else now
@@ -105,6 +109,7 @@ class Store:
         self.threads: dict[tuple[str, str], ThreadInfo] = {}
         self.limits: CodexLimits | None = None
         self._index_mtimes: dict[str, float] = {}
+        self._discovered_at: float | None = None
         self._index_names: dict[str, str] = {}
 
     # --- Sink interface -----------------------------------------------------
@@ -138,17 +143,40 @@ class Store:
                     found.append((p, CodexFile))
         return found
 
-    def refresh(self) -> bool:
-        """Reads new/changed files. Returns True if anything changed."""
+    def _sync_files(self) -> None:
+        found = self._discover()
+        paths = {p for p, _ in found}
+        # Files that disappeared (e.g. a Codex session moved to archived_sessions) keep their events.
+        for gone in [p for p in self.files if p not in paths]:
+            del self.files[gone]
+        for path, cls in found:
+            if path not in self.files:
+                self.files[path] = cls(path)
+
+    def refresh(self, discover: bool = False) -> bool:
+        """Reads new/changed files. Returns True if anything changed.
+
+        New files are looked for on the first call, every DISCOVER_SECONDS, or when discover is True.
+        """
+        now = time.monotonic()
+        if discover or self._discovered_at is None or now - self._discovered_at >= DISCOVER_SECONDS:
+            self._sync_files()
+            self._discovered_at = now
+        pending = []
+        for f in self.files.values():
+            try:
+                st = os.stat(f.path)
+            except OSError:
+                continue
+            if f.changed(st):
+                pending.append((st.st_mtime, f))
         changed = False
         # Oldest files first: an API call present in several files belongs to the first one.
-        for path, cls in sorted(self._discover(), key=lambda x: _mtime(x[0])):
-            f = self.files.get(path)
-            if f is None:
-                f = self.files[path] = cls(path)
-            size_before = f.offset
+        pending.sort(key=lambda x: x[0])
+        for _, f in pending:
+            offset_before = f.offset
             f.update(self)
-            changed |= f.offset != size_before
+            changed |= f.offset != offset_before
         for base in self.codex_dirs:
             changed |= self._read_codex_index(os.path.join(base, "session_index.jsonl"))
         return changed
@@ -242,10 +270,3 @@ class Store:
             file_count=len(self.files),
             generated_at=time.time(),
         )
-
-
-def _mtime(path: str) -> float:
-    try:
-        return os.stat(path).st_mtime
-    except OSError:
-        return 0.0

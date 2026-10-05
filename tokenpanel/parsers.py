@@ -70,11 +70,7 @@ class JsonlFile:
         self.size = -1
         self.mtime = -1.0
 
-    def changed(self) -> bool:
-        try:
-            st = os.stat(self.path)
-        except OSError:
-            return False
+    def changed(self, st: os.stat_result) -> bool:
         if st.st_size == self.size and st.st_mtime == self.mtime:
             return False
         if st.st_size < self.offset:  # file was truncated/rewritten
@@ -108,9 +104,9 @@ class JsonlFile:
                 yield obj
 
     def update(self, sink: Sink) -> None:
-        if self.changed():
-            for obj in self.read_new():
-                self.handle(obj, sink)
+        """Reads what was appended since the last call; the caller has checked changed()."""
+        for obj in self.read_new():
+            self.handle(obj, sink)
 
     def handle(self, obj: dict, sink: Sink) -> None:
         raise NotImplementedError

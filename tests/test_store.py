@@ -7,6 +7,7 @@ from unittest import mock
 
 from tokenpanel import paths
 from tokenpanel.__main__ import console_encoding
+from tokenpanel import store as store_mod
 from tokenpanel.store import Store, project_name
 
 
@@ -242,6 +243,46 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(s.total.total, 110 + 55)
         titles = {t.title for c in s.clients for t in c.threads}
         self.assertIn("From WSL", titles)
+
+    def test_new_files_found_once_a_minute_known_files_every_tick(self):
+        d = os.path.join(self.claude, "projects", "x")
+        write_jsonl(os.path.join(d, "a.jsonl"), [claude_msg("m1", "r1", "a", "cli", output_tokens=5)])
+        clock = [1000.0]
+        with mock.patch.object(store_mod.time, "monotonic", lambda: clock[0]), \
+                mock.patch.object(store_mod.glob, "glob", wraps=store_mod.glob.glob) as walk:
+            self.store.refresh()
+            walks = walk.call_count
+            self.assertGreater(walks, 0)
+
+            # Appending to a known file is seen on the next tick without walking the directories.
+            with open(os.path.join(d, "a.jsonl"), "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(claude_msg("m2", "r2", "a", "cli", output_tokens=7)) + "\n")
+            os.utime(os.path.join(d, "a.jsonl"), (1e9, 2e9))
+            clock[0] += 5
+            self.assertTrue(self.store.refresh())
+            self.assertEqual(walk.call_count, walks)
+            self.assertEqual(self.store.summarize("all").total.total, 12)
+
+            # A new file waits for the next discovery...
+            write_jsonl(os.path.join(d, "b.jsonl"), [claude_msg("m3", "r3", "b", "cli", output_tokens=3)])
+            clock[0] += 5
+            self.assertFalse(self.store.refresh())
+            self.assertEqual(self.store.summarize("all").total.total, 12)
+            # ...which happens after DISCOVER_SECONDS,
+            clock[0] += store_mod.DISCOVER_SECONDS
+            self.assertTrue(self.store.refresh())
+            self.assertEqual(self.store.summarize("all").total.total, 15)
+
+            # or right away when asked (the Refresh button).
+            write_jsonl(os.path.join(d, "c.jsonl"), [claude_msg("m4", "r4", "c", "cli", output_tokens=1)])
+            self.assertTrue(self.store.refresh(discover=True))
+            self.assertEqual(self.store.summarize("all").total.total, 16)
+
+            # A file that disappears is no longer stat'ed, but its usage is kept.
+            os.remove(os.path.join(d, "c.jsonl"))
+            self.store.refresh(discover=True)
+            self.assertNotIn(os.path.join(d, "c.jsonl"), self.store.files)
+            self.assertEqual(self.store.summarize("all").total.total, 16)
 
 
 class PathsTest(unittest.TestCase):

@@ -110,7 +110,7 @@ python -m tokenpanel          # needs Python 3.10+ and PySide6 6.4+
 
 - Left click: open/close the panel. It closes when you click elsewhere or press `Esc`; `Backspace` goes back one level.
 - Right click: Open panel / Refresh / Quit.
-- Logs are checked every 5 seconds; only newly appended lines are read.
+- Logs are checked every 5 seconds and only newly appended lines are read. New log files are picked up within a minute; **Refresh** looks for them right away.
 
 Terminal output (without opening the panel):
 

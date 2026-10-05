@@ -1,6 +1,6 @@
 # Token Panel
 
-A small system tray app for Linux and Windows that shows how many tokens Claude Code and Codex use.
+A small system tray app for Linux, Windows and macOS that shows how many tokens Claude Code and Codex use.
 It never talks to an API; it reads the session logs both tools write to your computer.
 
 ## What it shows
@@ -50,6 +50,28 @@ It is a single file; nothing is installed and Python is not needed.
 
 Logs are read from `%USERPROFILE%\.claude` and `%USERPROFILE%\.codex`, the folders Claude Code and Codex use on
 Windows. Terminal output works too (in PowerShell): `.\TokenPanel.exe --dump | Out-Host`.
+
+### macOS
+
+> Built and tested automatically on GitHub's macOS machines, but not yet tried on a real Mac. Reports welcome.
+
+Download `TokenPanel-macos-arm64.zip` (Apple Silicon: M1 and later) or `TokenPanel-macos-x86_64.zip` (Intel)
+from the [Releases](https://github.com/sucuklutank123456789-coder/Token-Panel/releases) page (or from the newest
+successful run under **Actions → Build → Artifacts**). Unzip it and move **TokenPanel.app** to Applications.
+
+The app is not signed with an Apple Developer ID, so macOS blocks the first launch:
+
+1. Open TokenPanel.app; macOS says it can't be opened. Click **Done**.
+2. **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to TokenPanel.
+3. Open it again and confirm with **Open**. Later launches work normally.
+
+Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/TokenPanel.app`.
+
+- It lives in the menu bar (no Dock icon). Opening the app shows the panel, which helps on MacBooks where the
+  notch can hide menu bar icons.
+- Click the icon to open the panel; right click or control-click for Refresh, **Start at login** and Quit.
+- Logs are read from `~/.claude` and `~/.codex`, the same folders as on Linux.
+- Terminal output: `/Applications/TokenPanel.app/Contents/MacOS/TokenPanel --dump`.
 
 ### Linux, any distribution (recommended)
 
@@ -109,7 +131,7 @@ python -m tokenpanel          # needs Python 3.10+ and PySide6 6.4+
 ## Usage
 
 - Left click: open/close the panel. It closes when you click elsewhere or press `Esc`; `Backspace` goes back one level.
-- Right click: Open panel / Refresh / Quit.
+- Right click (on macOS also control-click): Open panel / Refresh / Quit, plus start on login on Windows and macOS.
 - Logs are checked every 5 seconds and only newly appended lines are read. New log files are picked up within a minute; **Refresh** looks for them right away.
 
 Terminal output (without opening the panel):
@@ -144,10 +166,19 @@ python -m unittest discover -s tests -t .
 Windows build (on Windows, with PySide6 and PyInstaller installed):
 
 ```bash
-python packaging/windows/make_ico.py packaging/windows/tokenpanel.ico
+python packaging/make_icons.py ico packaging/windows/tokenpanel.ico
 pyinstaller --noconfirm packaging/windows/tokenpanel.spec     # writes dist/TokenPanel.exe
 ```
 
-The **Build** workflow runs the tests on Linux and Windows, builds `TokenPanel.exe` on every push and checks it
-against sample logs with Windows paths (`scripts/sample_logs.py`). Pushing a `v*` tag attaches the .exe to a
-GitHub release.
+macOS build (on a Mac, with PySide6 and PyInstaller installed):
+
+```bash
+python packaging/make_icons.py iconset tokenpanel.iconset
+iconutil -c icns tokenpanel.iconset -o packaging/macos/tokenpanel.icns
+pyinstaller --noconfirm packaging/macos/tokenpanel.spec       # writes dist/TokenPanel.app
+codesign --force --deep --sign - dist/TokenPanel.app            # ad-hoc signature
+```
+
+The **Build** workflow runs the tests on Linux, Windows and macOS on every push. It builds `TokenPanel.exe` and
+`TokenPanel.app` (Apple Silicon and Intel) and checks them against sample logs (`scripts/sample_logs.py`).
+Pushing a `v*` tag attaches the builds to a GitHub release.

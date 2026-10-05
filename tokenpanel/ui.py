@@ -39,6 +39,7 @@ from .paths import wsl_distros
 from .store import RANGES, ClientRow, Store, Summary, ThreadRow
 
 REFRESH_MS = 5000
+MAC = sys.platform == "darwin"
 
 
 # --- Tema -----------------------------------------------------------------------
@@ -800,6 +801,30 @@ def make_icon(color: str = "#2a78d6") -> QIcon:
     return icon
 
 
+def make_menubar_icon() -> QIcon:
+    """macOS menu bar icon: black bars on transparent, marked as a template so macOS tints it for the
+    light or dark menu bar."""
+    icon = QIcon()
+    for size in (16, 18, 32, 36):
+        pm = QPixmap(size, size)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        bw = size * 0.2
+        gap = size * 0.1
+        x0 = (size - (3 * bw + 2 * gap)) / 2
+        base = size * 0.88
+        for i, frac in enumerate((0.45, 0.76, 0.58)):
+            h = size * frac
+            r = QPainterPath()
+            r.addRoundedRect(x0 + i * (bw + gap), base - h, bw, h, bw / 3, bw / 3)
+            p.fillPath(r, QColor("#000000"))
+        p.end()
+        icon.addPixmap(pm)
+    icon.setIsMask(True)
+    return icon
+
+
 class App(QObject):
     request_range = Signal(str)
     request_refresh = Signal()
@@ -832,7 +857,7 @@ class App(QObject):
         self.thread.start()
 
         if self.tray_ok:
-            self.tray = QSystemTrayIcon(make_icon(), self)
+            self.tray = QSystemTrayIcon(make_menubar_icon() if MAC else make_icon(), self)
             self.tray.setToolTip("Token Panel — loading")
             menu = QMenu()
             act_open = QAction("Open panel", menu)
@@ -845,7 +870,7 @@ class App(QObject):
             menu.addSeparator()
             if autostart.supported():
                 autostart.sync()
-                act_auto = QAction("Start with Windows", menu)
+                act_auto = QAction(autostart.label(), menu)
                 act_auto.setCheckable(True)
                 act_auto.setChecked(autostart.enabled())
                 act_auto.toggled.connect(autostart.set_enabled)
@@ -860,7 +885,9 @@ class App(QObject):
                 menu.addSeparator()
             menu.addAction(act_quit)
             self.menu = menu
-            self.tray.setContextMenu(menu)
+            if not MAC:
+                # On macOS a context menu would open on every click, so it is shown from on_tray instead.
+                self.tray.setContextMenu(menu)
             self.tray.activated.connect(self.on_tray)
             self.tray.show()
         else:
@@ -875,6 +902,10 @@ class App(QObject):
             self.show_panel()
 
     def on_tray(self, reason):
+        if MAC and reason == QSystemTrayIcon.Context:  # right click or control-click
+            self.panel.hide()
+            self.menu.popup(QCursor.pos())
+            return
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.MiddleClick):
             if self.panel.isVisible():
                 self.panel.hide()

@@ -115,6 +115,10 @@ def main(argv: list[str] | None = None) -> int:
         ap.add_argument("--wsl", action="store_true", help="Also read logs inside WSL distributions (for --dump)")
     ap.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--autostart", action="store_true", help=argparse.SUPPRESS)  # started on login
+    if argv is None:
+        argv = sys.argv[1:]
+    # Older macOS versions pass a process serial number to apps opened from the Finder.
+    argv = [a for a in argv if not a.startswith("-psn_")]
     args = ap.parse_args(argv)
 
     def make_store(include_wsl: bool = False) -> Store:
@@ -133,8 +137,9 @@ def main(argv: list[str] | None = None) -> int:
 
     from .ui import run
 
-    # On Windows new tray icons start hidden in the overflow area, so opening the program shows the panel.
-    show = args.show or (sys.platform == "win32" and not args.autostart)
+    # Opening the program by hand shows the panel: Windows hides new tray icons in the overflow area, and
+    # on a MacBook the menu bar icon can sit behind the notch. Started on login it stays in the tray.
+    show = args.show or (sys.platform in ("win32", "darwin") and not args.autostart)
     return run(make_store, show=show, self_test=args.self_test)
 
 

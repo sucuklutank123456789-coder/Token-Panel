@@ -8,3 +8,4 @@ packaging/arch/*.pkg.tar.*
 
 # Windows build
 packaging/windows/tokenpanel.ico
+packaging/macos/tokenpanel.icns

@@ -37,6 +37,7 @@ OPENCODE_CLIENTS = {"opencode": "All clients"}
 # What the panel counts as "tokens".
 METRICS = {
     "app": "Same as the official apps",
+    "app_nc": "Official apps, cache excluded",
     "io": "Input + output",
     "new": "Input + output + cache writes",
     "raw": "Raw (including cache reads)",
@@ -62,11 +63,12 @@ class Usage:
     cache_write: int = 0
     output: int = 0
     reasoning: int = 0
-    # Input and output as the official apps report them.
+    # Tokens as the official apps report them: non-cached input, cached input (reads and writes) and output.
     # Claude: the stats screen counts every transcript line of a response that was split across lines.
     # Codex: its own counter (token_count) leaves out conversation compaction calls.
     app_in: float = 0
     app_out: float = 0
+    app_cache: float = 0
     # Estimated API price in USD, and the tokens (input + output) of calls whose model has no known price.
     cost: float = 0
     unpriced: float = 0
@@ -82,7 +84,8 @@ class Usage:
     def value(self, metric: str) -> float:
         """Value under the given metric.
 
-        app: what Claude Code's stats ("Total tokens") and Codex's own counter show
+        app: what Claude Code's stats ("Total tokens") and Codex's own counter show, cache included
+        app_nc: the same without cached input, as the official apps counted before
         io : non-cached input + output, every model call once (actual spend)
         new: io + input written to the cache
         raw: everything, including context re-read from the cache on every call
@@ -93,6 +96,8 @@ class Usage:
     def split(self, metric: str) -> tuple[float, float]:
         """(input part, output part) of the value under the given metric."""
         if metric == "app":
+            return self.app_in + self.app_cache, self.app_out
+        if metric == "app_nc":
             return self.app_in, self.app_out
         if metric == "raw":
             return self.input + self.cache_write + self.cache_read, self.output
@@ -103,7 +108,7 @@ class Usage:
     def scaled(self, f: float) -> Usage:
         return Usage(
             self.input * f, self.cache_read * f, self.cache_write * f, self.output * f, self.reasoning * f,
-            self.app_in * f, self.app_out * f, self.cost * f, self.unpriced * f,
+            self.app_in * f, self.app_out * f, self.app_cache * f, self.cost * f, self.unpriced * f,
         )
 
     def add(self, other: Usage) -> None:
@@ -114,6 +119,7 @@ class Usage:
         self.reasoning += other.reasoning
         self.app_in += other.app_in
         self.app_out += other.app_out
+        self.app_cache += other.app_cache
         self.cost += other.cost
         self.unpriced += other.unpriced
 

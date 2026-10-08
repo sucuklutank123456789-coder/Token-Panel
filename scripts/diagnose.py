@@ -129,6 +129,7 @@ print("  input:", m(st["input"]), " output:", m(st["output"]), " cache reads:", 
       " cache writes:", m(st["cache_write"]))
 print("  input+output:", m(st["input"] + st["output"]),
       " | +cache writes:", m(st["input"] + st["output"] + st["cache_write"]))
+print("  all four (what /stats shows as Total tokens now):", m(sum(st.values())))
 
 p = base + "/stats-cache.json"
 if os.path.exists(p):

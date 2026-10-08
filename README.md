@@ -22,18 +22,21 @@ Hover the tray icon for today's total; hover any row for the exact numbers.
 
 ### Which tokens are counted?
 
-Agents resend the whole conversation on every model call, and most of it is read from the cache.
-Counting cache reads inflates totals 30–150×, so the default metric is **Same as the official apps**.
-It can be changed with the **Metric** button on the overview:
+Agents resend the whole conversation on every model call, and most of it is read from the cache, so counting
+cache reads inflates totals 30–150×. Claude Code's `/stats` and the Codex app now count it anyway, which is why
+they show billions. The default metric, **Same as the official apps**, follows them; the other metrics leave
+the cache out. It can be changed with the **Metric** button on the overview:
 
 | Metric | What is counted |
 |---|---|
-| Same as the official apps (default) | Claude: the same method as "Total tokens" in the Claude app — every transcript line of a response that Claude Code split across lines is counted (≈1.5–2.5× higher for Claude). Codex: the same as Codex's own counter — conversation compaction summary calls are not counted |
+| Same as the official apps (default) | Claude: the same method as "Total tokens" in Claude Code's `/stats` — input, output, cache reads and cache writes, and every transcript line of a response that Claude Code split across lines is counted. Like `/stats`, workflow subagents (`subagents/workflows/`) are left out. Codex: the same as Codex's own counter, cached input included — conversation compaction summary calls are not counted. OpenCode: input, output and cache |
+| Official apps, cache excluded | the same, without cached input: how the official apps counted before they included the cache |
 | Input + output | every model call counted once: non-cached input + output (thinking included), compaction calls included — actual spend |
 | Input + output + cache writes | the above plus context written to the cache for the first time |
 | Raw | everything, including context re-read from the cache on every call |
 
 The choice is remembered. Input and output are shown under the same metric.
+Ranges are calendar days, as in `/stats`: "7d" is today and the 6 days before.
 
 ### API cost estimate
 
@@ -166,7 +169,7 @@ python -m tokenpanel          # needs Python 3.10+ and PySide6 6.4+
 Terminal output (without opening the panel):
 
 ```bash
-tokenpanel --dump --range 7d --metric app   # app | io | new | raw
+tokenpanel --dump --range 7d --metric app   # app | app_nc | io | new | raw
 ```
 
 ## Data sources

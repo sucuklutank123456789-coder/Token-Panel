@@ -197,8 +197,8 @@ class OpenCodeDb:
             output=_num(tokens, "output") + reasoning,
             reasoning=reasoning,
         )
-        # OpenCode shows input + output; there is no separate counter to match.
-        u.app_in, u.app_out = u.input, u.output
+        # OpenCode has no running total of its own to match; counted like the other apps.
+        u.app_in, u.app_out, u.app_cache = u.input, u.output, u.cache_read + u.cache_write
         model, variant, cwd = msg
         if lookup(model) is not None:
             price_usage(u, model)

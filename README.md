@@ -29,13 +29,14 @@ the cache out. It can be changed with the **Metric** button on the overview:
 
 | Metric | What is counted |
 |---|---|
-| Same as the official apps (default) | Claude: the same method as "Total tokens" in Claude Code's `/stats` — input, output, cache reads and cache writes, and every transcript line of a response that Claude Code split across lines is counted. Codex: the same as Codex's own counter, cached input included — conversation compaction summary calls are not counted. OpenCode: input, output and cache |
+| Same as the official apps (default) | Claude: the same method as "Total tokens" in Claude Code's `/stats` — input, output, cache reads and cache writes, and every transcript line of a response that Claude Code split across lines is counted. Like `/stats`, workflow subagents (`subagents/workflows/`) are left out. Codex: the same as Codex's own counter, cached input included — conversation compaction summary calls are not counted. OpenCode: input, output and cache |
 | Official apps, cache excluded | the same, without cached input: how the official apps counted before they included the cache |
 | Input + output | every model call counted once: non-cached input + output (thinking included), compaction calls included — actual spend |
 | Input + output + cache writes | the above plus context written to the cache for the first time |
 | Raw | everything, including context re-read from the cache on every call |
 
 The choice is remembered. Input and output are shown under the same metric.
+Ranges are calendar days, as in `/stats`: "7d" is today and the 6 days before.
 
 ### API cost estimate
 

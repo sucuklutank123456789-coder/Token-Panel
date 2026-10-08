@@ -122,6 +122,18 @@ class ClaudeFile(JsonlFile):
     carrying the same usage), so calls are deduplicated by message.id + requestId.
     """
 
+    def __init__(self, path: str):
+        super().__init__(path)
+        # Claude Code's /stats reads projects/<project>/*.jsonl and <project>/<session>/subagents/agent-*.jsonl
+        # only; workflow subagents (subagents/workflows/...) are left out of it.
+        parent = os.path.dirname(path)
+        if os.path.basename(parent) == "subagents":
+            self.stats_kind = "subagent" if os.path.basename(path).startswith("agent-") else ""
+        elif os.path.basename(os.path.dirname(parent)) == "projects":
+            self.stats_kind = "main"
+        else:
+            self.stats_kind = ""
+
     def handle(self, d: dict, sink: Sink) -> None:
         kind = d.get("type")
         sid = d.get("sessionId")
@@ -181,7 +193,7 @@ class ClaudeFile(JsonlFile):
             if isinstance(b, dict) and b.get("type") in ("tool_use", "server_tool_use")
         ]
         # The app's stats skip sidechain lines in main files but count subagent files.
-        counted = not d.get("isSidechain") or f"{os.sep}subagents{os.sep}" in self.path
+        counted = self.stats_kind == "subagent" or (self.stats_kind == "main" and not d.get("isSidechain"))
         if counted:
             u.app_in, u.app_out, u.app_cache = u.input, u.output, u.cache_read + u.cache_write
         creation = usage.get("cache_creation")

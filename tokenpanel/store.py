@@ -33,14 +33,12 @@ DISCOVER_SECONDS = 60.0
 
 def range_start(key: str, now: float | None = None) -> float:
     now = time.time() if now is None else now
-    if key == "today":
-        d = datetime.fromtimestamp(now)
-        return d.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    if key == "7d":
-        return now - 7 * 86400
-    if key == "30d":
-        return now - 30 * 86400
-    return 0.0
+    # Calendar days, like Claude Code's /stats: "7 days" is today and the 6 days before.
+    days = {"today": 1, "7d": 7, "30d": 30}.get(key)
+    if days is None:
+        return 0.0
+    first = datetime.fromtimestamp(now).date() - timedelta(days=days - 1)
+    return datetime.combine(first, datetime.min.time()).timestamp()
 
 
 def project_name(cwd: str) -> str:

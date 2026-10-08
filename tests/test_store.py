@@ -4,6 +4,7 @@ import plistlib
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from unittest import mock
 
 from tokenpanel import autostart, paths, pricing
@@ -178,6 +179,31 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(t.usage.value("io"), 200 + 50 + 200 + 20)
         self.assertEqual(s.limits.plan, "plus")
         self.assertEqual(s.limits.primary.used_percent, 12.0)
+
+    def test_app_metric_reads_the_files_claude_stats_reads(self):
+        proj = os.path.join(self.claude, "projects", "-home-u-proj")
+        write_jsonl(os.path.join(proj, "s1.jsonl"), [
+            claude_msg("m1", "r1", "s1", "cli", input_tokens=1, output_tokens=2, cache_read_input_tokens=10),
+            dict(claude_msg("m2", "r2", "s1", "cli", output_tokens=100), isSidechain=True),
+        ])
+        write_jsonl(os.path.join(proj, "s1", "subagents", "agent-a1.jsonl"), [
+            dict(claude_msg("m3", "r3", "s1", "cli", output_tokens=20), isSidechain=True),
+        ])
+        # Workflow subagents are left out of /stats.
+        write_jsonl(os.path.join(proj, "s1", "subagents", "workflows", "wf_1", "agent-w1.jsonl"), [
+            dict(claude_msg("m4", "r4", "s1", "cli", output_tokens=1000), isSidechain=True),
+        ])
+        self.store.refresh()
+        s = self.store.summarize("all")
+        self.assertEqual(s.total.value("app"), 13 + 20)
+        self.assertEqual(s.total.value("io"), 3 + 100 + 20 + 1000)
+
+    def test_ranges_are_calendar_days(self):
+        now = datetime(2026, 10, 8, 15, 30).timestamp()
+        self.assertEqual(store_mod.range_start("today", now), datetime(2026, 10, 8).timestamp())
+        self.assertEqual(store_mod.range_start("7d", now), datetime(2026, 10, 2).timestamp())
+        self.assertEqual(store_mod.range_start("30d", now), datetime(2026, 9, 9).timestamp())
+        self.assertEqual(store_mod.range_start("all", now), 0.0)
 
     def test_codex_app_metric_follows_codex_counter(self):
         # The compaction call is recorded but not added to Codex's own counter.

@@ -121,10 +121,13 @@ class StoreTest(unittest.TestCase):
         # io leaves out cache reads: 10+5 + 20 + 7.
         self.assertEqual(s.total.value("io"), 42)
         self.assertEqual(s.total.value("raw"), 142)
-        # The app method counts split lines separately: m1 twice (15+15) + 20 + 7.
-        self.assertEqual(s.total.value("app"), 57)
+        # Claude Code's /stats counts split lines separately, cache included: m1 twice (115+115) + 20 + 7.
+        self.assertEqual(s.total.value("app"), 257)
+        # Its count before it included the cache: m1 twice (15+15) + 20 + 7.
+        self.assertEqual(s.total.value("app_nc"), 57)
         # Every metric splits into input and output.
-        self.assertEqual(s.total.split("app"), (20, 37))
+        self.assertEqual(s.total.split("app"), (220, 37))
+        self.assertEqual(s.total.split("app_nc"), (20, 37))
         self.assertEqual(s.total.split("io"), (10, 32))
         self.assertEqual(s.total.split("raw"), (110, 32))
         # A response split across lines is priced once: Opus 5.5 ($4 in, $0.20 cache read, $20 out) for m1
@@ -200,8 +203,11 @@ class StoreTest(unittest.TestCase):
         self.store.refresh()
         s, c = self.clients()
         u = c[("codex", "Codex Desktop")].usage
-        self.assertEqual(u.value("app"), (1400 - 700) + 120)
-        self.assertEqual(u.split("app"), (1400 - 700, 120))
+        # Codex's counter, cached input included: input_tokens already contains the cached part.
+        self.assertEqual(u.value("app"), 1400 + 120)
+        self.assertEqual(u.split("app"), (1400, 120))
+        self.assertEqual(u.value("app_nc"), (1400 - 700) + 120)
+        self.assertEqual(u.split("app_nc"), (1400 - 700, 120))
         self.assertEqual(u.value("io"), (400 + 100) + (4000 + 300) + (300 + 20))
 
     def test_codex_legacy_token_count_fallback(self):

@@ -716,6 +716,11 @@ class Panel(QWidget):
         if s.total.total:
             if s.metric == "raw":
                 text = f"{fmt.percent(s.total.cache_read, s.total.total)} of this is input read from the cache."
+            elif s.metric == "app":
+                text = (
+                    f"Includes cached input, as Claude Code's /stats and Codex count it "
+                    f"({fmt.short(s.total.app_cache)} of the total)."
+                )
             else:
                 text = (
                     f"{fmt.short(s.total.cache_read)} tokens re-read from the cache are not counted "
@@ -761,9 +766,11 @@ class Panel(QWidget):
         menu = self._metric_menu
         menu.clear()
         hints = {
-            "app": "Default. Claude: same method as 'Total tokens' in the Claude app, which counts every "
-            "transcript line of a response split across lines. Codex: same as Codex's own counter "
-            "(conversation compaction calls are not counted).",
+            "app": "Default. Claude: same as 'Total tokens' in Claude Code's /stats, which counts every "
+            "transcript line of a response split across lines, cache reads and writes included. Codex: same as "
+            "Codex's own counter, cached input included (conversation compaction calls are not counted).",
+            "app_nc": "The official apps' count without cached input, as they reported it before they started "
+            "counting the cache.",
             "io": "Every model call counted once, compaction calls included: actual spend.",
             "new": "Also counts context written to the cache for the first time.",
             "raw": "Also counts context re-read from the cache on every call; gets very large.",
@@ -922,7 +929,7 @@ class Panel(QWidget):
 
         self._section(lay, "Token types")
         u = t.usage
-        counted = {"app": {"input", "output"}, "io": {"input", "output"}, "new": {"input", "output", "cache_write"}}
+        counted = {"app_nc": {"input", "output"}, "io": {"input", "output"}, "new": {"input", "output", "cache_write"}}
         included = counted.get(s.metric, {"input", "output", "cache_write", "cache_read"})
         kinds = [
             ("input", "New input", u.input),

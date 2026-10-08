@@ -52,9 +52,11 @@ def _prompt_text(text: str) -> str:
     return text.removeprefix("/goal ").strip()
 
 
-def _blended(u: dict) -> tuple[int, int]:
-    """The total Codex shows, as (non-cached input, output)."""
-    return max(_int(u, "input_tokens") - _int(u, "cached_input_tokens"), 0), _int(u, "output_tokens")
+def _blended(u: dict) -> tuple[int, int, int]:
+    """Codex's counter as (non-cached input, cached input, output); input_tokens includes the cached part."""
+    inp = _int(u, "input_tokens")
+    non_cached = max(inp - _int(u, "cached_input_tokens"), 0)
+    return non_cached, inp - non_cached, _int(u, "output_tokens")
 
 
 def _short(text: str, limit: int = 80) -> str:
@@ -181,7 +183,7 @@ class ClaudeFile(JsonlFile):
         # The app's stats skip sidechain lines in main files but count subagent files.
         counted = not d.get("isSidechain") or f"{os.sep}subagents{os.sep}" in self.path
         if counted:
-            u.app_in, u.app_out = u.input, u.output
+            u.app_in, u.app_out, u.app_cache = u.input, u.output, u.cache_read + u.cache_write
         creation = usage.get("cache_creation")
         key = f"claude:{msg.get('id')}:{d.get('requestId')}"
         ev = Event(
@@ -203,6 +205,7 @@ class ClaudeFile(JsonlFile):
             existing.usage.merge_max(u)
             existing.usage.app_in += u.app_in
             existing.usage.app_out += u.app_out
+            existing.usage.app_cache += u.app_cache
             existing.tools.extend(tools)
             existing.write_1h = max(existing.write_1h, ev.write_1h)
             price_usage(existing.usage, existing.model, existing.write_1h, existing.fast)
@@ -236,7 +239,7 @@ class CodexFile(JsonlFile):
         self.last_total = -1
         # Codex's own counter (token_count.total_token_usage), for the "app" metric.
         self.last_event: Event | None = None
-        self.app_total: tuple[int, int] | None = None
+        self.app_total: tuple[int, int, int] | None = None
 
     def handle(self, d: dict, sink: Sink) -> None:
         kind = d.get("type")
@@ -330,14 +333,16 @@ class CodexFile(JsonlFile):
         if self.app_total is None:
             # In resumed sessions the counter carries over from the previous file; start from there.
             last = info.get("last_token_usage")
-            last_in, last_out = _blended(last) if isinstance(last, dict) else (0, 0)
-            self.app_total = (blended[0] - last_in, blended[1] - last_out)
-        d_in, d_out = blended[0] - self.app_total[0], blended[1] - self.app_total[1]
+            prev = _blended(last) if isinstance(last, dict) else (0, 0, 0)
+            self.app_total = tuple(b - p for b, p in zip(blended, prev, strict=True))
+        d_in, d_cache, d_out = (b - a for b, a in zip(blended, self.app_total, strict=True))
         self.app_total = blended
         if self.last_event is not None:
             # The counter only grows; each part is credited separately.
-            self.last_event.usage.app_in += max(d_in, 0)
-            self.last_event.usage.app_out += max(d_out, 0)
+            u = self.last_event.usage
+            u.app_in += max(d_in, 0)
+            u.app_cache += max(d_cache, 0)
+            u.app_out += max(d_out, 0)
 
     def _response_item(self, p: dict, sink: Sink) -> None:
         sub = p.get("type")
@@ -369,6 +374,7 @@ class CodexFile(JsonlFile):
         # With records, the app counter is filled in by the token_count that follows.
         if not self.has_records:
             usage.app_in, usage.app_out = usage.input, usage.output
+            usage.app_cache = usage.cache_read + usage.cache_write
         price_usage(usage, model)
         ev = Event(
             source="codex",

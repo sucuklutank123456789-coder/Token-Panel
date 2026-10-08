@@ -106,8 +106,8 @@ def main(argv: list[str] | None = None) -> int:
         "--metric",
         choices=list(METRICS),
         default=DEFAULT_METRIC,
-        help="Metric for --dump: app=same as the official apps, io=input+output, new=+cache writes, "
-        "raw=including cache reads",
+        help="Metric for --dump: app=same as the official apps, app_nc=the official apps without cached input, "
+        "io=input+output, new=+cache writes, raw=including cache reads",
     )
     ap.add_argument("--show", action="store_true", help="Also open the panel on startup")
     ap.add_argument("--claude-dir", action="append", help="Claude config directory (default ~/.claude)")

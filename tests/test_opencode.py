@@ -91,7 +91,8 @@ class OpenCodeTest(unittest.TestCase):
         self.assertEqual(u.output, 150 + 200 + 30)  # reasoning counted as output, like the other tools
         self.assertEqual(u.reasoning, 50)
         self.assertEqual(u.cache_read, 4000)
-        self.assertEqual(u.value("app"), 3300 + 380)
+        self.assertEqual(u.value("app"), 3300 + 4000 + 380)
+        self.assertEqual(u.value("app_nc"), 3300 + 380)
         # Sonnet 5.5 at $2 in / $0.20 cache read / $10 out, plus OpenCode's $0.25 for the unknown model.
         expected = (3000 * 2 + 4000 * 0.2 + 350 * 10) / 1e6 + 0.25
         self.assertAlmostEqual(u.cost, expected)

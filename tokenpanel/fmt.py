@@ -48,6 +48,10 @@ def ago(ts: float, now: float | None = None) -> str:
     return datetime.fromtimestamp(ts).strftime("%b %d, %Y")
 
 
+def hhmm(ts: float) -> str:
+    return datetime.fromtimestamp(ts).strftime("%H:%M") if ts else "—"
+
+
 def clock(ts: float) -> str:
     if not ts:
         return "—"

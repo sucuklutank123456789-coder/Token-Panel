@@ -208,6 +208,13 @@ if ! pyside_ok "$VENV/bin/python"; then
   "$VENV/bin/python" -m pip install --quiet "PySide6>=6.4" || die "Could not install PySide6 from PyPI."
 fi
 
+# Codex compresses logs older than 7 days (.jsonl.zst); Python 3.14+ reads them by itself.
+if ! "$VENV/bin/python" -c 'import compression.zstd' 2>/dev/null &&
+  ! "$VENV/bin/python" -c 'import zstandard' 2>/dev/null; then
+  "$VENV/bin/python" -m pip install --quiet zstandard ||
+    warn "Could not install zstandard; Codex logs older than 7 days will be missing."
+fi
+
 info "Installing Token Panel"
 build="$(mktemp -d)"
 trap 'rm -rf "$build"' EXIT

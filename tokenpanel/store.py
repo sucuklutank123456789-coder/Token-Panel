@@ -112,6 +112,8 @@ class Summary:
     file_count: int
     generated_at: float
     daily: list[DayRow] = field(default_factory=list)  # oldest first, the last DAILY_DAYS days
+    day: date | None = None  # set when this summary covers one day (range_key "day")
+    unreadable: int = 0  # compressed logs that couldn't be read (no zstd decoder)
 
 
 class Store:
@@ -165,8 +167,9 @@ class Store:
                 found.append((p, ClaudeFile))
         for base in self.codex_dirs:
             for sub in ("sessions", "archived_sessions"):
-                for p in glob.glob(os.path.join(base, sub, "**", "*.jsonl"), recursive=True):
-                    found.append((p, CodexFile))
+                for pattern in ("*.jsonl", "*.jsonl.zst"):  # Codex compresses files older than 7 days
+                    for p in glob.glob(os.path.join(base, sub, "**", pattern), recursive=True):
+                        found.append((p, CodexFile))
         for p in opencode_dbs(self.opencode_dirs):
             found.append((p, OpenCodeDb))
         return found
@@ -254,8 +257,16 @@ class Store:
         return True
 
     # --- Summary -------------------------------------------------------------
-    def summarize(self, range_key: str, metric: str = DEFAULT_METRIC, now: float | None = None) -> Summary:
-        start = range_start(range_key, now)
+    def summarize(
+        self, range_key: str, metric: str = DEFAULT_METRIC, now: float | None = None, day: date | None = None
+    ) -> Summary:
+        """Totals for a range ("today", "7d", ...), or for one calendar day when day is given."""
+        if day is not None:
+            range_key = "day"
+            start = datetime.combine(day, datetime.min.time()).timestamp()
+            end = datetime.combine(day + timedelta(days=1), datetime.min.time()).timestamp()
+        else:
+            start, end = range_start(range_key, now), float("inf")
         total = Usage()
         by_source: dict[str, Usage] = {s: Usage() for s in SOURCE_LABELS}
         clients: dict[tuple[str, str], ClientRow] = {}
@@ -263,7 +274,7 @@ class Store:
         daily = self._daily_rows(time.time() if now is None else now)
 
         for ev in self.events.values():
-            if ev.ts < start:
+            if ev.ts < start or ev.ts >= end:
                 continue
             u = ev.usage
             total.add(u)
@@ -318,4 +329,6 @@ class Store:
             file_count=len(self.files),
             generated_at=time.time(),
             daily=daily,
+            day=day,
+            unreadable=sum(1 for f in self.files.values() if getattr(f, "unreadable", False)),
         )

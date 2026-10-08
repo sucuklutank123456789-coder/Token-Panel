@@ -11,7 +11,8 @@ The panel opens layer by layer:
 1. **Overview** — total tokens for the selected range (Today / 7d / 30d / All) with its input / output split
    and estimated API cost, the Claude Code / Codex / OpenCode share, a daily chart of the last 30 days, and
    Codex's 5-hour and weekly usage limits. Hover a column for its numbers; click the chart for the same days as a
-   table. Days outside the selected range are drawn faded.
+   table. Days outside the selected range are drawn faded. Click a day in the table for that day alone: its
+   clients (CLI, Desktop, ACP…) and threads, each of which opens like the pages below.
 2. **Details** — per-tool breakdown by client: CLI, Desktop, VS Code extension, ACP (Zed);
    the models used, the number of threads and the estimated cost for each.
 3. **Threads** — the threads of the selected client: title, project, models, last activity.
@@ -170,6 +171,7 @@ Terminal output (without opening the panel):
 
 ```bash
 tokenpanel --dump --range 7d --metric app   # app | app_nc | io | new | raw
+tokenpanel --dump --day 2026-10-05          # one day
 ```
 
 ## Data sources
@@ -177,7 +179,7 @@ tokenpanel --dump --range 7d --metric app   # app | app_nc | io | new | raw
 | Tool | Log location | Client field |
 |---|---|---|
 | Claude Code | `~/.claude/projects/**/*.jsonl`, on Windows `%USERPROFILE%\.claude` (honours `CLAUDE_CONFIG_DIR`) | `entrypoint`: `cli`, `claude-desktop`, `claude-vscode`, `sdk-ts` (Zed ACP) |
-| Codex | `~/.codex/sessions/**/*.jsonl`, `~/.codex/archived_sessions/`, on Windows `%USERPROFILE%\.codex` (honours `CODEX_HOME`) | `originator`: `codex-tui`, `Codex Desktop`, `codex_vscode`, `zed` |
+| Codex | `~/.codex/sessions/**/*.jsonl` and `*.jsonl.zst` (Codex compresses sessions older than 7 days; read with the `zstandard` package, which the installers include, or Python 3.14+), `~/.codex/archived_sessions/`, on Windows `%USERPROFILE%\.codex` (honours `CODEX_HOME`) | `originator`: `codex-tui`, `Codex Desktop`, `codex_vscode`, `zed` |
 | OpenCode (1.2+) | `~/.local/share/opencode/opencode.db` on every OS, on Windows `%USERPROFILE%\.local\share\opencode` (honours `XDG_DATA_HOME`, `OPENCODE_DB`); read-only | not recorded — shown as "All clients" |
 
 Known limitations:

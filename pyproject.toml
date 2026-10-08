@@ -10,7 +10,12 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 # tzdata: Windows has no system time zone database (used to read reset times like "4pm (Europe/Berlin)").
-dependencies = ["PySide6>=6.4", "tzdata; sys_platform == 'win32'"]
+dependencies = [
+    "PySide6>=6.4",
+    "tzdata; sys_platform == 'win32'",
+    # Codex compresses logs older than 7 days (.jsonl.zst); Python 3.14+ reads them without it.
+    "zstandard; python_version < '3.14'",
+]
 
 [project.urls]
 Homepage = "https://github.com/sucuklutank123456789-coder/Token-Panel"

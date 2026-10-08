@@ -7,7 +7,7 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
-from tokenpanel import autostart, paths, pricing
+from tokenpanel import autostart, compressed, paths, pricing
 from tokenpanel import store as store_mod
 from tokenpanel.__main__ import console_encoding
 from tokenpanel.store import Store, project_name
@@ -235,6 +235,70 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(u.value("app_nc"), (1400 - 700) + 120)
         self.assertEqual(u.split("app_nc"), (1400 - 700, 120))
         self.assertEqual(u.value("io"), (400 + 100) + (4000 + 300) + (300 + 20))
+
+    def _codex_session(self):
+        def tc(inp, cached, out):
+            u = {"input_tokens": inp, "cached_input_tokens": cached, "output_tokens": out}
+            return {"timestamp": "2026-10-04T10:02:00Z", "type": "event_msg", "payload": {
+                "type": "token_count", "info": {"total_token_usage": u, "last_token_usage": u}}}
+
+        return [codex_meta("tz", "codex_cli_rs"), codex_turn("u1", "gpt-5.5", "high"),
+                codex_record("r1", "u1", 1000, 600, 100), tc(1000, 600, 100)]
+
+    @unittest.skipUnless(compressed.available(), "no zstd decoder")
+    def test_codex_compressed_session_is_read_once(self):
+        import zstandard
+
+        rows = self._codex_session()
+        day = os.path.join(self.codex, "sessions", "2026", "10", "04")
+        plain = os.path.join(day, "rollout-z.jsonl")
+        write_jsonl(plain, rows)
+        self.store.refresh()
+        # Codex compresses the file once it is a week old: the plain file goes, the .zst one appears.
+        data = "".join(json.dumps(r) + "\n" for r in rows).encode()
+        with open(plain + ".zst", "wb") as fh:
+            fh.write(zstandard.ZstdCompressor().compress(data))
+        os.remove(plain)
+        self.store.refresh(discover=True)
+        s, c = self.clients()
+        u = c[("codex", "codex_cli_rs")].usage
+        self.assertEqual(u.value("io"), 400 + 100)
+        self.assertEqual(u.value("app"), 1000 + 100)
+        self.assertEqual(s.unreadable, 0)
+
+        # A fresh start finds only the compressed file.
+        fresh = Store([self.claude], self.codex, [self.opencode])
+        fresh.refresh()
+        self.assertEqual(fresh.summarize("all").by_source["codex"].value("app"), 1000 + 100)
+
+    def test_compressed_logs_without_a_decoder_are_reported(self):
+        p = os.path.join(self.codex, "sessions", "2026", "10", "04", "rollout-z.jsonl.zst")
+        os.makedirs(os.path.dirname(p))
+        with open(p, "wb") as fh:
+            fh.write(b"not zstd")
+        with mock.patch.object(compressed, "_read", None):
+            self.store.refresh()
+        s = self.store.summarize("all")
+        self.assertEqual(s.unreadable, 1)
+        self.assertEqual(s.total.total, 0)
+
+    def test_one_day_summary(self):
+        proj = os.path.join(self.claude, "projects", "-home-u-proj")
+        write_jsonl(os.path.join(proj, "s1.jsonl"), [
+            claude_msg("m1", "r1", "s1", "cli", output_tokens=5, ts="2026-10-03T12:00:00Z"),
+            claude_msg("m2", "r2", "s1", "cli", output_tokens=7, ts="2026-10-04T12:00:00Z"),
+        ])
+        write_jsonl(os.path.join(proj, "s2.jsonl"), [
+            claude_msg("m3", "r3", "s2", "sdk-ts", output_tokens=11, ts="2026-10-04T13:00:00Z"),
+        ])
+        self.store.refresh()
+        when = datetime.fromtimestamp(datetime(2026, 10, 4, 12).timestamp())  # local date of the second call
+        s = self.store.summarize("all", day=when.date())
+        self.assertEqual(s.day, when.date())
+        self.assertEqual(s.total.output, 7 + 11)
+        self.assertEqual({c.client for c in s.clients}, {"cli", "sdk-ts"})
+        cli = next(c for c in s.clients if c.client == "cli")
+        self.assertEqual(cli.threads[0].usage.output, 7)
 
     def test_codex_legacy_token_count_fallback(self):
         p = os.path.join(self.codex, "sessions", "2025", "01", "01", "rollout-old.jsonl")

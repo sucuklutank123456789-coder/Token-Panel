@@ -36,12 +36,14 @@ from PySide6.QtWidgets import (
 )
 
 from . import autostart, fmt
-from .describe import cost_text
+from .describe import UNREADABLE_NOTE, cost_text
 from .model import DEFAULT_METRIC, METRICS, SOURCE_LABELS, Usage
 from .paths import wsl_distros
 from .store import DAILY_DAYS, RANGES, ClientRow, DayRow, Store, Summary, ThreadRow, range_start
 
 REFRESH_MS = 5000
+# Threads listed on a day's page; a client's page lists all of them.
+DAY_THREADS = 15
 # Codex limit resets and "x min ago" texts age without any log change; re-summarize at least this often.
 RESUMMARIZE_S = 60
 MAC = sys.platform == "darwin"
@@ -111,7 +113,8 @@ def current_theme() -> Theme:
 
 
 class Worker(QObject):
-    updated = Signal(object, object)  # (summary for the selected range, summary for today)
+    # (summary for the selected range, summary for today, summary for the day opened in the panel or None)
+    updated = Signal(object, object, object)
 
     def __init__(self, make_store, metric: str, include_wsl: bool = False):
         super().__init__()
@@ -120,6 +123,7 @@ class Worker(QObject):
         self.range_key = "today"
         self.metric_key = metric
         self.include_wsl = include_wsl
+        self.day = None  # a date the panel shows in detail
         self.timer: QTimer | None = None
         self.last_emit = 0.0
 
@@ -156,6 +160,12 @@ class Worker(QObject):
         if self.store is not None:
             self._emit()
 
+    @Slot(object)
+    def set_day(self, day):
+        self.day = day
+        if self.store is not None and day is not None:
+            self._emit()
+
     @Slot(bool)
     def set_wsl(self, on: bool):
         # The log directories change, so start over with a fresh store.
@@ -174,7 +184,8 @@ class Worker(QObject):
         self.last_emit = time.monotonic()
         today = self.store.summarize("today", self.metric_key)
         current = today if self.range_key == "today" else self.store.summarize(self.range_key, self.metric_key)
-        self.updated.emit(current, today)
+        day = self.store.summarize("day", self.metric_key, day=self.day) if self.day is not None else None
+        self.updated.emit(current, today, day)
 
 
 # --- Small widgets -------------------------------------------------------------
@@ -441,6 +452,11 @@ def stat_row(theme: Theme, u: Usage, metric: str) -> QHBoxLayout:
     return row
 
 
+def day_prefix(s: Summary) -> str:
+    """'Oct 5 · ' on pages reached from a day's page, so the breadcrumb says which day they cover."""
+    return f"{s.day:%b} {s.day.day} · " if s.day else ""
+
+
 def models_text(models: dict[str, Usage], metric: str) -> str:
     return ", ".join(m for m, _ in sorted(models.items(), key=lambda x: -x[1].value(metric)))
 
@@ -452,6 +468,7 @@ class Panel(QWidget):
     range_changed = Signal(str)
     metric_changed = Signal(str)
     refresh_requested = Signal()
+    day_requested = Signal(object)  # a date, or None when no day page is open
 
     WIDTH, HEIGHT = 380, 560
 
@@ -469,6 +486,9 @@ class Panel(QWidget):
         self.sel_client: tuple[str, str] | None = None
         self.sel_thread: str | None = None
         self.daily_view = False  # level 1 shows the daily table instead of the clients
+        # From the daily table: level 2 is one day, levels 3 and 4 that day's client and thread.
+        self.sel_day = None
+        self.day_summary: Summary | None = None
         self.hidden_at = 0.0
         # Pages are rebuilt on every refresh; the menu is a persistent object owned by the panel.
         self._metric_menu = QMenu(self)
@@ -566,8 +586,10 @@ class Panel(QWidget):
     def v(self, u: Usage) -> float:
         return u.value(self.summary.metric if self.summary else self.metric_key)
 
-    def set_summary(self, s: Summary):
+    def set_summary(self, s: Summary, day: Summary | None = None):
         self.summary = s
+        if day is not None and day.day == self.sel_day:
+            self.day_summary = day
         self.render()
 
     def keyPressEvent(self, e):
@@ -594,6 +616,9 @@ class Panel(QWidget):
         self.level = level
         if level == 1:
             self.daily_view = False
+            if self.sel_day is not None:
+                self.sel_day, self.day_summary = None, None
+                self.day_requested.emit(None)
         if client is not None:
             self.sel_client = client
         if thread is not None:
@@ -605,10 +630,21 @@ class Panel(QWidget):
         self.daily_view = True
         self.render(reset_scroll=True)
 
+    def open_day(self, day):
+        self.level = 2
+        self.daily_view = True
+        if day != self.sel_day:
+            self.sel_day, self.day_summary = day, None
+        self.day_requested.emit(day)
+        self.render(reset_scroll=True)
+
     def go_back(self):
         self.level = max(0, self.level - 1)
         if self.level == 0:
             self.daily_view = False
+        if self.level < 2 and self.sel_day is not None:
+            self.sel_day, self.day_summary = None, None
+            self.day_requested.emit(None)
         self.render(reset_scroll=True)
 
     # Rendering
@@ -623,17 +659,27 @@ class Panel(QWidget):
             lay.addWidget(label("Reading logs…", self.theme.text2, 13))
             self.crumb_row.hide()
         else:
-            client = self._find_client(s)
+            if self.daily_view:
+                # Overview › daily table › one day › that day's client › thread
+                pages = [self._page_summary, self._page_daily, self._page_day, self._page_threads, self._page_thread]
+                first = 3
+                data = self.day_summary if self.level >= 2 else s
+            else:
+                pages = [self._page_summary, self._page_clients, self._page_threads, self._page_thread]
+                first = 2
+                data = s
+            client = self._find_client(data) if data is not None else None
             thread = self._find_thread(client)
-            if self.level >= 2 and client is None:
-                self.level = 1
-            if self.level >= 3 and thread is None:
-                self.level = 2
+            if self.level >= first and client is None and data is not None:
+                self.level = first - 1
+            if self.level >= first + 1 and thread is None and data is not None:
+                self.level = first
             self.crumb_row.setVisible(self.level > 0)
-            pages = [self._page_summary, self._page_clients, self._page_threads, self._page_thread]
-            if self.daily_view and self.level == 1:
-                pages[1] = self._page_daily
-            pages[self.level](lay, s, client, thread)
+            if data is None:
+                self.crumb.setText(f"{self.sel_day:%a, %b} {self.sel_day.day}")
+                lay.addWidget(label("Reading…", self.theme.text2, 13))
+            else:
+                pages[self.level](lay, data, client, thread)
             self.status.setText(
                 f"Updated {fmt.clock(s.generated_at)} · {s.file_count} log files"
             )
@@ -730,6 +776,11 @@ class Panel(QWidget):
             note.setContentsMargins(10, 6, 10, 0)
             note.setWordWrap(True)
             lay.addWidget(note)
+        if s.unreadable:
+            warn = label(UNREADABLE_NOTE.format(n=s.unreadable), th.warning, 11)
+            warn.setContentsMargins(10, 6, 10, 0)
+            warn.setWordWrap(True)
+            lay.addWidget(warn)
 
         if s.daily:
             self._section(lay, f"Daily · last {DAILY_DAYS} days")
@@ -845,7 +896,7 @@ class Panel(QWidget):
                         [(v(c.usage), color)],
                         top,
                         tooltip=usage_tooltip(c.usage),
-                        on_click=lambda c=c: self.open(2, client=(c.source, c.client)),
+                        on_click=lambda c=c: self.open(self.level + 1, client=(c.source, c.client)),
                     )
                 )
 
@@ -862,16 +913,83 @@ class Panel(QWidget):
             sub = " · ".join(f"{SOURCE_LABELS[k]} {fmt.short(v(u))}" for k, u in parts)
             lay.addWidget(
                 Row(th, title, sub, fmt.short(v(d.total)), [(v(u), th.series[k]) for k, u in parts], peak,
-                    tooltip=usage_tooltip(d.total))
+                    tooltip=usage_tooltip(d.total),
+                    on_click=(lambda d=d: self.open_day(d.day)) if v(d.total) or d.total.total else None)
             )
         note = label("Days follow this computer's local time.", th.muted, 10)
         note.setContentsMargins(10, 4, 10, 0)
         lay.addWidget(note)
 
+    # From the daily table: one day
+    def _page_day(self, lay, s: Summary, *_):
+        th = self.theme
+        v = self.v
+        self.crumb.setText(f"{s.day:%A, %B} {s.day.day}")
+        hero = label(fmt.short(v(s.total)), th.text, 30, True)
+        hero.setContentsMargins(10, 8, 10, 0)
+        hero.setToolTip(usage_tooltip(s.total))
+        lay.addWidget(hero)
+        lay.addSpacing(4)
+        lay.addLayout(stat_row(th, s.total, s.metric))
+        if not s.clients:
+            lay.addSpacing(10)
+            lay.addWidget(label("No usage on this day.", th.text2, 13))
+            return
+
+        top = max(v(c.usage) for c in s.clients) or 1
+        for src in SOURCE_LABELS:
+            rows = [c for c in s.clients if c.source == src]
+            if not rows:
+                continue
+            color = th.series[src]
+            self._section(lay, SOURCE_LABELS[src], color, fmt.short(v(s.by_source[src])))
+            for c in rows:
+                n = len(c.threads)
+                lay.addWidget(
+                    Row(
+                        th,
+                        c.label,
+                        f"≈ {fmt.money(c.usage.cost)} · {models_text(c.models, s.metric)}"
+                        f" · {n} thread{'s' if n != 1 else ''}",
+                        fmt.short(v(c.usage)),
+                        [(v(c.usage), color)],
+                        top,
+                        tooltip=usage_tooltip(c.usage),
+                        on_click=lambda c=c: self.open(3, client=(c.source, c.client)),
+                    )
+                )
+
+        # The day's threads across all clients, largest first.
+        threads = sorted(
+            ((c, t) for c in s.clients for t in c.threads), key=lambda ct: -v(ct[1].usage)
+        )
+        shown = threads[:DAY_THREADS]
+        self._section(lay, "Threads this day", value=f"{len(threads)}")
+        top = (v(shown[0][1].usage) if shown else 0) or 1
+        for c, t in shown:
+            lay.addWidget(
+                Row(
+                    th,
+                    t.title,
+                    f"{SOURCE_LABELS[c.source]} · {c.label} · {t.project} · "
+                    f"{fmt.hhmm(t.first_ts)}–{fmt.hhmm(t.last_ts)} · ≈ {fmt.money(t.usage.cost)}",
+                    fmt.short(v(t.usage)),
+                    [(v(t.usage), th.series[c.source])],
+                    top,
+                    tooltip=f"{t.title}\n{t.cwd}\n\n{usage_tooltip(t.usage)}",
+                    on_click=lambda c=c, t=t: self.open(4, client=(c.source, c.client), thread=t.thread_id),
+                )
+            )
+        if len(threads) > len(shown):
+            more = label(f"{len(threads) - len(shown)} more: open a client above to see all of its threads.",
+                         th.muted, 10)
+            more.setContentsMargins(10, 4, 10, 0)
+            lay.addWidget(more)
+
     # Level 2: threads of one client
     def _page_threads(self, lay, s, c: ClientRow, _):
         th = self.theme
-        self.crumb.setText(f"{SOURCE_LABELS[c.source]} · {c.label}")
+        self.crumb.setText(f"{day_prefix(s)}{SOURCE_LABELS[c.source]} · {c.label}")
         color = th.series[c.source]
         v = self.v
         self._section(lay, f"{len(c.threads)} thread{'s' if len(c.threads) != 1 else ''}", color, fmt.short(v(c.usage)))
@@ -887,7 +1005,7 @@ class Panel(QWidget):
                     [(v(t.usage), color)],
                     top,
                     tooltip=f"{t.title}\n{t.cwd}\n\n{usage_tooltip(t.usage)}",
-                    on_click=lambda t=t: self.open(3, thread=t.thread_id),
+                    on_click=lambda t=t: self.open(self.level + 1, thread=t.thread_id),
                 )
             )
 
@@ -895,7 +1013,7 @@ class Panel(QWidget):
     def _page_thread(self, lay, s, c: ClientRow, t: ThreadRow):
         th = self.theme
         color = th.series[t.source]
-        self.crumb.setText(f"{SOURCE_LABELS[c.source]} · {c.label} · thread")
+        self.crumb.setText(f"{day_prefix(s)}{SOURCE_LABELS[c.source]} · {c.label} · thread")
         title = label(t.title, th.text, 15, True)
         title.setWordWrap(True)
         title.setContentsMargins(10, 4, 10, 0)
@@ -1034,6 +1152,7 @@ class App(QObject):
     request_refresh = Signal()
     request_metric = Signal(str)
     request_wsl = Signal(bool)
+    request_day = Signal(object)
 
     def __init__(self, make_store, show: bool):
         super().__init__()
@@ -1055,9 +1174,11 @@ class App(QObject):
         self.request_refresh.connect(self.worker.refresh_now)
         self.request_metric.connect(self.worker.set_metric)
         self.request_wsl.connect(self.worker.set_wsl)
+        self.request_day.connect(self.worker.set_day)
         self.panel.range_changed.connect(self.request_range.emit)
         self.panel.metric_changed.connect(self.on_metric)
         self.panel.refresh_requested.connect(self.request_refresh.emit)
+        self.panel.day_requested.connect(self.request_day.emit)
         self.thread.start()
 
         if self.tray_ok:
@@ -1131,9 +1252,9 @@ class App(QObject):
         self.settings.setValue("wsl", on)
         self.request_wsl.emit(on)
 
-    @Slot(object, object)
-    def on_update(self, current: Summary, today: Summary):
-        self.panel.set_summary(current)
+    @Slot(object, object, object)
+    def on_update(self, current: Summary, today: Summary, day: Summary | None):
+        self.panel.set_summary(current, day)
         if self.tray_ok:
             m = today.metric
             parts = " · ".join(f"{SOURCE_LABELS[k]} {fmt.short(u.value(m))}" for k, u in today.by_source.items())
@@ -1177,35 +1298,59 @@ class SelfTest(QObject):
         super().__init__()
         self.app, self.main = app, main
         self.done = False
+        self.levels: int | None = None  # set once the regular pages were rendered
         main.worker.updated.connect(self.check)
         # The worker may have sent its first update before this connection existed; ask for a fresh one.
         main.request_refresh.emit()
         QTimer.singleShot(60000, lambda: self.finish(3, "timed out"))
 
-    @Slot(object, object)
-    def check(self, current: Summary, today: Summary):
+    @Slot(object, object, object)
+    def check(self, current: Summary, today: Summary, day: Summary | None):
         if self.done:
             return
         try:
             p = self.main.panel
-            p.grab()
-            p.open_daily()
-            p.grab()
-            p.go_back()
-            p.open(1)
-            p.grab()
-            levels = 2
-            if current.clients:
-                c = current.clients[0]
-                p.open(2, client=(c.source, c.client))
+            if self.levels is None:
                 p.grab()
-                levels += 1
-                if c.threads:
-                    p.open(3, thread=c.threads[0].thread_id)
+                p.open_daily()
+                p.grab()
+                p.go_back()
+                p.open(1)
+                p.grab()
+                self.levels = 2
+                if current.clients:
+                    c = current.clients[0]
+                    p.open(2, client=(c.source, c.client))
                     p.grab()
-                    levels += 1
+                    self.levels += 1
+                    if c.threads:
+                        p.open(3, thread=c.threads[0].thread_id)
+                        p.grab()
+                        self.levels += 1
+                # A day's page needs its own summary from the worker; the next update brings it.
+                p.go_back()
+                p.go_back()
+                p.go_back()
+                p.open_daily()
+                busiest = max(current.daily, key=lambda d: d.total.total)
+                p.open_day(busiest.day)
+                p.grab()
+                return
+            if day is None:
+                return
+            p.grab()  # the day's page
+            self.levels += 1
+            if day.clients:
+                c = day.clients[0]
+                p.open(3, client=(c.source, c.client))
+                p.grab()
+                if c.threads:
+                    p.open(4, thread=c.threads[0].thread_id)
+                    p.grab()
+                if p.level != (4 if c.threads else 3):
+                    raise RuntimeError(f"day pages: ended on level {p.level}")
             platform = self.app.platformName()
-            self.finish(0, f"self-test ok: {levels} levels, {current.file_count} files, platform {platform}")
+            self.finish(0, f"self-test ok: {self.levels} levels, {current.file_count} files, platform {platform}")
         except Exception as e:  # report instead of letting Qt swallow it
             self.finish(2, f"self-test failed: {e!r}")
 

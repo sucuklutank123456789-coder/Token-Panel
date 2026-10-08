@@ -13,3 +13,9 @@ def cost_text(u: Usage) -> str:
         text += f" (+ {fmt.short(u.unpriced)} tokens of models without a known price)"
     return text
 
+
+
+UNREADABLE_NOTE = (
+    "{n} compressed Codex logs (older than 7 days) could not be read: the zstandard Python package is missing. "
+    "Reinstall Token Panel, or run: pip install zstandard"
+)

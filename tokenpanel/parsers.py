@@ -11,6 +11,7 @@ import os
 from datetime import datetime
 from typing import Protocol
 
+from .compressed import read_zst
 from .model import CodexLimits, Event, RateWindow, ThreadInfo, Usage
 from .pricing import price_usage
 
@@ -65,10 +66,15 @@ def _short(text: str, limit: int = 80) -> str:
 
 
 class JsonlFile:
-    """Reads a file from where it left off; a half-written last line waits for the next round."""
+    """Reads a file from where it left off; a half-written last line waits for the next round.
+
+    A compressed file (.jsonl.zst) is finished and not appended to; it is read whole.
+    """
 
     def __init__(self, path: str):
         self.path = path
+        self.compressed = path.endswith(".zst")
+        self.unreadable = False  # a compressed file that couldn't be decompressed
         self.offset = 0
         self.size = -1
         self.mtime = -1.0
@@ -76,7 +82,7 @@ class JsonlFile:
     def changed(self, st: os.stat_result) -> bool:
         if st.st_size == self.size and st.st_mtime == self.mtime:
             return False
-        if st.st_size < self.offset:  # file was truncated/rewritten
+        if not self.compressed and st.st_size < self.offset:  # file was truncated/rewritten
             self.offset = 0
             self.reset()
         self.size, self.mtime = st.st_size, st.st_mtime
@@ -86,6 +92,9 @@ class JsonlFile:
         pass
 
     def read_new(self):
+        if self.compressed:
+            yield from self._read_compressed()
+            return
         try:
             with open(self.path, "rb") as fh:
                 fh.seek(self.offset)
@@ -99,6 +108,21 @@ class JsonlFile:
         for raw in data[: end + 1].splitlines():
             if not raw.strip():
                 continue
+            try:
+                obj = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(obj, dict):
+                yield obj
+
+    def _read_compressed(self):
+        data = read_zst(self.path)
+        self.unreadable = data is None
+        if data is None:
+            return
+        self.reset()  # read from the start; events already counted are recognized by their keys
+        self.offset += len(data) or 1  # only has to change, so the store sees new data
+        for raw in data.splitlines():
             try:
                 obj = json.loads(raw)
             except ValueError:

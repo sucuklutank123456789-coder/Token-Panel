@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install tzdata
+      - run: python -m pip install tzdata zstandard
       - run: python -m unittest discover -s tests -t . -v
 
   windows-exe:
@@ -43,7 +43,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install build tools
-        run: python -m pip install "PySide6>=6.4" tzdata pyinstaller
+        run: python -m pip install "PySide6>=6.4" tzdata zstandard pyinstaller
       - name: Build TokenPanel.exe
         env:
           QT_QPA_PLATFORM: offscreen
@@ -68,6 +68,9 @@ jobs:
           foreach ($want in "Claude Code · CLI", "Codex · Desktop", "OpenCode · All clients", "token-panel", "API cost") {
             if (-not (Select-String -Path dump.txt -SimpleMatch $want -Quiet)) { throw "--dump output lacks '$want'" }
           }
+          # The compressed Codex session from 10 days ago (.jsonl.zst) must be read too.
+          $all = & $exe --dump --range all @dirs | Out-String
+          if (-not $all.Contains("[Codex · CLI]")) { throw "the compressed Codex log was not read: '$all'" }
 
           # The command the README gives: piping makes PowerShell wait for the GUI program and capture its output.
           $piped = & $exe --dump --range today @dirs | Out-String
@@ -114,7 +117,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install build tools
-        run: python -m pip install "PySide6>=6.4" pyinstaller
+        run: python -m pip install "PySide6>=6.4" zstandard pyinstaller
       - name: Build TokenPanel.app
         env:
           QT_QPA_PLATFORM: offscreen
@@ -142,6 +145,8 @@ jobs:
             "API cost"; do
             grep -qF "$want" dump.txt || { echo "--dump output lacks '$want'"; exit 1; }
           done
+          # The compressed Codex session from 10 days ago (.jsonl.zst) must be read too.
+          "$exe" --dump --range all "${dirs[@]}" | grep -qF "[Codex · CLI]" || { echo "compressed Codex log not read"; exit 1; }
 
           # --self-test: opens the panel and renders every level, with the real Cocoa platform plugin
           # and with the offscreen one.

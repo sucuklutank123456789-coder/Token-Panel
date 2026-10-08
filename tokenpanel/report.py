@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from . import fmt
-from .describe import cost_text
+from .describe import UNREADABLE_NOTE, cost_text
 from .model import METRICS, SOURCE_LABELS
 from .store import RANGES, Summary
 
@@ -13,11 +13,14 @@ def render(s: Summary, max_threads: int = 5) -> str:
         return u.value(s.metric)
 
     inp, outp = s.total.split(s.metric)
+    period = s.day.isoformat() if s.day else RANGES[s.range_key]
     out = [
-        f"{RANGES[s.range_key]}: {fmt.short(v(s.total))} tokens ({fmt.full(v(s.total))}) — metric: {METRICS[s.metric]}",
+        f"{period}: {fmt.short(v(s.total))} tokens ({fmt.full(v(s.total))}) — metric: {METRICS[s.metric]}",
         f"  input {fmt.short(inp)} · output {fmt.short(outp)} · {cost_text(s.total)}",
         "  " + " · ".join(f"{SOURCE_LABELS[k]} {fmt.short(v(u))}" for k, u in s.by_source.items()),
     ]
+    if s.unreadable:
+        out.append(f"  {UNREADABLE_NOTE.format(n=s.unreadable)}")
     if s.limits and s.limits.primary:
         p, w = s.limits.primary, s.limits.secondary
         line = f"  Codex limits: 5-hour {p.used_percent:.0f}%"

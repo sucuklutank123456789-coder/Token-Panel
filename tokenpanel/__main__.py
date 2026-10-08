@@ -4,6 +4,7 @@ import argparse
 import codecs
 import os
 import sys
+from datetime import date
 
 from .model import DEFAULT_METRIC, METRICS
 from .paths import default_claude_dirs, default_codex_dirs, default_opencode_dirs
@@ -102,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         "--dump", action="store_true", help="Print the summary to the terminal instead of opening the panel"
     )
     ap.add_argument("--range", choices=list(RANGES), default="all", help="Time range for --dump")
+    ap.add_argument("--day", type=date.fromisoformat, help="One day for --dump instead of a range (YYYY-MM-DD)")
     ap.add_argument(
         "--metric",
         choices=list(METRICS),
@@ -137,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
 
         store = make_store(getattr(args, "wsl", False))
         store.refresh()
-        print(render(store.summarize(args.range, args.metric)))
+        print(render(store.summarize(args.range, args.metric, day=args.day)))
         return 0
 
     from .ui import run

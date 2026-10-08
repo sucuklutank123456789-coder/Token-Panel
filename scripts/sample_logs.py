@@ -14,7 +14,7 @@ import os
 import sqlite3
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def _write(path: str, rows: list[dict]) -> None:
@@ -63,7 +63,33 @@ def write_sample(out: str) -> None:
         {"timestamp": now, "type": "event_msg",
          "payload": {"type": "token_count", "info": {"total_token_usage": usage, "last_token_usage": usage}}},
     ])
+    write_compressed_codex(out, cwd)
     write_opencode(os.path.join(out, "opencode"), cwd)
+
+
+def write_compressed_codex(out: str, cwd: str) -> None:
+    """A Codex CLI session from 10 days ago, compressed to .jsonl.zst as Codex does with files older than 7 days."""
+    try:
+        import zstandard
+    except ImportError:
+        return
+    when = datetime.now(timezone.utc) - timedelta(days=10)
+    ts = when.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    usage = {"input_tokens": 9000, "cached_input_tokens": 6000, "output_tokens": 900, "reasoning_output_tokens": 0}
+    rows = [
+        {"timestamp": ts, "type": "session_meta",
+         "payload": {"id": "codex-old", "originator": "codex_cli_rs", "cwd": cwd}},
+        {"type": "turn_context", "payload": {"turn_id": "u1", "model": "gpt-5.5", "effort": "medium"}},
+        {"timestamp": ts, "type": "token_usage_record",
+         "payload": {"response_id": "resp-old", "turn_id": "u1", "usage": usage}},
+        {"timestamp": ts, "type": "event_msg",
+         "payload": {"type": "token_count", "info": {"total_token_usage": usage, "last_token_usage": usage}}},
+    ]
+    path = os.path.join(out, "codex", "sessions", *when.strftime("%Y/%m/%d").split("/"), "rollout-old.jsonl.zst")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    data = "".join(json.dumps(r) + "\n" for r in rows).encode()
+    with open(path, "wb") as fh:
+        fh.write(zstandard.ZstdCompressor().compress(data))
 
 
 def write_opencode(directory: str, cwd: str) -> None:
